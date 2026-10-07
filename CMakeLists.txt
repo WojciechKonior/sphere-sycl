@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.20)
 
-# Wymuszenie kompilatora icpx (MUSI być przed project())
+# Wymuszenie kompilatora icpx (przed project())
 set(CMAKE_CXX_COMPILER icpx)
 
 project(PicSimulation CXX)
@@ -10,23 +10,31 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Flag SYCL i optymalizacji dla Intel OneAPI
+# Flagi SYCL i optymalizacji dla Intel OneAPI
 add_compile_options(-fsycl -O3 -g3)
 add_link_options(-fsycl)
 
 set(CMAKE_BUILD_TYPE Release)
 
-# Pliki źródłowe oraz nagłówkowe (dla IDE)
-set(SOURCES
-    ParticleStorage.cpp
-    ParticleStorage.hpp
-    Chunk.cpp
-    Chunk.hpp
-    Sphere.cpp
-    Species.cpp
-    Species.hpp
+# 1. Deklaracja plików nagłówkowych (dla IDE)
+set(HEADERS
+    include/Chunk.hpp
+    include/ParticleStorage.hpp
+    include/Species.hpp
 )
 
-add_executable(sphere ${SOURCES})
+# 2. Deklaracja plików źródłowych
+set(SOURCES
+    src/Chunk.cpp
+    src/ParticleStorage.cpp
+    src/Species.cpp
+    src/Sphere.cpp  # lub apps/Sphere.cpp
+)
 
-target_include_directories(sphere PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+# 3. Definicja pliku wykonywalnego
+add_executable(sphere ${SOURCES} ${HEADERS})
+
+# 4. Dołączenie katalogu include do ścieżki wyszukiwania nagłówków
+target_include_directories(sphere PRIVATE 
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+)

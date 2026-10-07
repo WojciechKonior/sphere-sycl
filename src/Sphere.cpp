@@ -1,14 +1,3 @@
-// #include <sycl/sycl.hpp>
-#include <vector>
-#include <unordered_map>
-#include <memory>
-#include <stdexcept>
-#include <algorithm>
-#include <iostream>
-#include <string>
-#include <cmath>
-
-#include "Species.hpp"
 #include "ParticleStorage.hpp"
 
 

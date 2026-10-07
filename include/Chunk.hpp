@@ -1,6 +1,7 @@
 #pragma once
 
 #include <sycl/sycl.hpp>
+#include <new>
 #include "Species.hpp"
 
 ///@brief Lightweight Structure of Arrays (SoA) view used to pass device VRAM pointers into SYCL kernels.
@@ -28,16 +29,22 @@ public:
     Chunk(const Chunk &) = delete; // Prevent copying to ensure sole ownership of VRAM resource allocations
     Chunk &operator=(const Chunk &) = delete; // Prevent copying to ensure sole ownership of VRAM resource allocations
     Chunk(Chunk &&other) noexcept; // Move constructor transfering VRAM ownership without reallocating
+    Chunk &operator=(Chunk &&other) noexcept; 
     
-    /// @brief Deallocates USM memory associated with this chunk.
-    void release(sycl::queue &q);
-
+    
     /// @return Maximum number of particles this chunk can hold.
     size_t capacity() const;
-
+    
     /// @return Current active particle count.
     size_t count() const;
-
+    
     /// @return Remaining capacity available for new particles.
     size_t available_space() const;
+
+    /// @return ChunkSoAView struct
+    ChunkSoAView get_view() const;
+    
+private:    
+    /// @brief Deallocates USM memory associated with this chunk.
+    void release(sycl::queue &q);
 };

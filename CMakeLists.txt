@@ -32,8 +32,8 @@ set(HEADERS
     include/Species.hpp
 )
 
-# 2. Deklaracja plików źródłowych
-set(SOURCES
+# 2. Deklaracja plików źródłowych rdzenia symulacji (BEZ main w Sphere.cpp)
+set(CORE_SOURCES
     src/SimulationSteps/ChargeDepositionStep.cpp
     src/SimulationSteps/FieldSolverStep.cpp
     src/SimulationSteps/ParticleColliderStep.cpp
@@ -44,13 +44,20 @@ set(SOURCES
     src/ParticleStorage.cpp
     src/SimulationEngine.cpp
     src/Species.cpp
-    src/Sphere.cpp  # lub apps/Sphere.cpp
 )
 
-# 3. Definicja pliku wykonywalnego
-add_executable(sphere ${SOURCES} ${HEADERS})
+# 3. Tworzenie biblioteki rdzenia symulacji
+add_library(picsim_core STATIC ${CORE_SOURCES} ${HEADERS})
 
-# 4. Dołączenie katalogu include do ścieżki wyszukiwania nagłówków
-target_include_directories(sphere PRIVATE 
+# PUBLIC sprawia, że cele konsumujące (sphere oraz testy) automatycznie dostaną ścieżkę include
+target_include_directories(picsim_core PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
+
+# 4. Definicja głównej aplikacji symulacji
+add_executable(sphere src/Sphere.cpp)
+target_link_libraries(sphere PRIVATE picsim_core)
+
+# 5. Włączenie i dołączenie podkatalogu z testami
+enable_testing()
+add_subdirectory(tests)

@@ -5,6 +5,7 @@
 #include <unordered_map>
 #include <memory>
 #include <cstddef>
+#include <mutex>
 
 #include "Species.hpp"
 #include "Chunk.hpp"
@@ -22,6 +23,10 @@ class ParticleStorage {
 private:
     sycl::queue &q_;
     std::unordered_map<SpeciesID, std::vector<std::unique_ptr<Chunk>>> species_chunks_;
+    mutable std::mutex storage_mutex_;
+
+    /// @brief Internal function for Swap-and-Pop on a single chunk
+    void compact_chunk(Chunk& chunk);
 
 public:
     explicit ParticleStorage(sycl::queue &q);
@@ -49,4 +54,13 @@ public:
 
     /// @brief Returns the current number of allocated chunks for a given species.
     size_t get_chunk_count(SpeciesID species) const;
+
+    /// @brief removing all marked particles for all species
+    void free_marked_particles();
+
+    /// @brief removing marked particles only for one species
+    void free_marked_particles(SpeciesID species);
+
+    /// @brief adding a chunk
+    Chunk& add_chunk(SpeciesID species, size_t capacity);
 };

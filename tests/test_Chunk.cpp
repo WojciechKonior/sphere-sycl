@@ -229,3 +229,110 @@ TEST_F(ChunkTest, GetViewMovedFromState) {
     ChunkSoAView view_b = chunk_b.get_view();
     EXPECT_NE(view_b.px, nullptr);
 }
+
+/**
+ * @test Verifies that Chunk properly allocates memory buffers and initializes counters.
+ */
+TEST_F(ChunkTest, InitializationAllocatesBuffers) {
+    const size_t capacity = 1000;
+    Chunk chunk(queue, capacity);
+
+    EXPECT_EQ(chunk.capacity(), capacity);
+    EXPECT_EQ(chunk.count(), 0);
+
+    auto view = chunk.get_view();
+
+    // Ensure all SoA and removal pointers are non-null
+    ASSERT_NE(view.px, nullptr);
+    ASSERT_NE(view.py, nullptr);
+    ASSERT_NE(view.pz, nullptr);
+    ASSERT_NE(view.vx, nullptr);
+    ASSERT_NE(view.vy, nullptr);
+    ASSERT_NE(view.vz, nullptr);
+    ASSERT_NE(view.d_dead_indices, nullptr);
+    ASSERT_NE(view.d_dead_count, nullptr);
+
+    // Verify d_dead_count is initialized to zero on device USM
+    int32_t h_dead_count = -1;
+    queue.memcpy(&h_dead_count, view.d_dead_count, sizeof(int32_t)).wait();
+    EXPECT_EQ(h_dead_count, 0);
+}
+
+/**
+ * @test Verifies atomic marking of particles for removal directly within a SYCL kernel.
+ */
+TEST_F(ChunkTest, MarkForRemovalInSYCLBuffer) {
+    const size_t capacity = 100;
+    Chunk chunk(queue, capacity);
+
+    auto view = chunk.get_view();
+
+    // Submit kernel marking specific indices (2, 5, 8) concurrently on GPU
+    queue.submit([&](sycl::handler& cgh) {
+        cgh.parallel_for(sycl::range<1>(10), [=](sycl::id<1> idx) {
+            size_t id = idx[0];
+            if (id == 2 || id == 5 || id == 8) {
+                view.mark_for_removal(id);
+            }
+        });
+    }).wait();
+
+    // 1. Verify that dead counter recorded exactly 3 removals
+    int32_t h_dead_count = 0;
+    queue.memcpy(&h_dead_count, view.d_dead_count, sizeof(int32_t)).wait();
+    EXPECT_EQ(h_dead_count, 3);
+
+    // 2. Read back indices from device USM and verify contents
+    std::vector<int32_t> h_dead_indices(3);
+    queue.memcpy(h_dead_indices.data(), view.d_dead_indices, 3 * sizeof(int32_t)).wait();
+
+    // Order of atomic inserts may vary on GPU, so sort before comparison
+    std::sort(h_dead_indices.begin(), h_dead_indices.end());
+    EXPECT_EQ(h_dead_indices[0], 2);
+    EXPECT_EQ(h_dead_indices[1], 5);
+    EXPECT_EQ(h_dead_indices[2], 8);
+}
+
+/**
+ * @test Verifies that ChunkSoAView accurately reflects active particle count.
+ */
+TEST_F(ChunkTest, ViewReflectsActiveCount) {
+    Chunk chunk(queue, 500);
+    
+    // Simulating allocation through ParticleStorage/Chunk setters
+    auto handles = chunk.get_view();
+    EXPECT_EQ(handles.count, 0);
+
+    // After adding particles
+    chunk.set_count(250);
+    auto updated_view = chunk.get_view();
+    EXPECT_EQ(updated_view.count, 250);
+}
+
+/**
+ * @test Verifies that set_count updates internal particle count 
+ * and is correctly reflected in ChunkSoAView.
+ */
+TEST_F(ChunkTest, SetCountUpdatesActiveParticleCount) {
+    const size_t capacity = 1000;
+    Chunk chunk(queue, capacity);
+
+    // Initial check
+    EXPECT_EQ(chunk.count(), 0);
+    EXPECT_EQ(chunk.get_view().count, 0);
+
+    // Update count using set_count
+    const size_t expected_count = 250;
+    chunk.set_count(expected_count);
+
+    // Verify getter and view
+    EXPECT_EQ(chunk.count(), expected_count);
+    
+    auto view = chunk.get_view();
+    EXPECT_EQ(view.count, expected_count);
+
+    // Boundary check: setting count to capacity
+    chunk.set_count(capacity);
+    EXPECT_EQ(chunk.count(), capacity);
+    EXPECT_EQ(chunk.get_view().count, capacity);
+}

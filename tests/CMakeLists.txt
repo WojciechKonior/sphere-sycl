@@ -9,7 +9,10 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 # Tworzenie pliku wykonywalnego z testami (np. test_chunk.cpp)
-add_executable(picsim_tests test_chunk.cpp)
+add_executable(picsim_tests 
+    test_Chunk.cpp
+    test_ParticleStorage.cpp
+)
 
 # Wymuszenie flag SYCL dla celu testowego
 target_compile_options(picsim_tests PRIVATE -fsycl)

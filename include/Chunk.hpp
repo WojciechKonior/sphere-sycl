@@ -9,6 +9,23 @@ struct ChunkSoAView {
     float* px; float* py; float* pz;
     float* vx; float* vy; float* vz;
     size_t count;
+    int32_t* d_dead_indices;
+    int32_t* d_dead_count;
+
+    /// @brief Safe method to call from SYCL kernel / host thread.
+    void mark_for_removal(size_t local_idx) const {
+        // Atomic refference to dead particle counter
+        auto atomic_dead_count = sycl::atomic_ref<
+            int32_t, 
+            sycl::memory_order::relaxed, 
+            sycl::memory_scope::device, 
+            sycl::access::address_space::global_space
+        >(*d_dead_count);
+
+        // Unique slot in dead indices buffer
+        int32_t slot = atomic_dead_count.fetch_add(1);
+        d_dead_indices[slot] = static_cast<int32_t>(local_idx);
+    }
 };
 
 /// @brief Manages a contiguous USM device allocation (Chunk) for particle data in SoA layout.
@@ -22,6 +39,9 @@ private:
 
     float *d_posX_ = nullptr; float *d_posY_ = nullptr; float *d_posZ_ = nullptr;
     float *d_velX_ = nullptr; float *d_velY_ = nullptr; float *d_velZ_ = nullptr;
+
+    int32_t *d_dead_indices_ = nullptr;
+    int32_t *d_dead_count_ = nullptr;
     
 public:
     Chunk(sycl::queue &q, size_t capacity = Constants::CHUNK_CAPACITY);
@@ -37,6 +57,9 @@ public:
     
     /// @return Current active particle count.
     size_t count() const;
+
+    /// @brief To set count_ 
+    void set_count(size_t count);
     
     /// @return Remaining capacity available for new particles.
     size_t available_space() const;

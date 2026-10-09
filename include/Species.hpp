@@ -18,7 +18,7 @@ namespace Constants {
     constexpr float CHARGE_HYDROGEN_ION     =  CHARGE_ELEMENTARY;
     constexpr float CHARGE_NEUTRAL    =  0.0f;
 
-    constexpr size_t CHUNK_CAPACITY = 10000000; // 1e7
+    constexpr size_t CHUNK_CAPACITY = 2000000; // 2e6
 }
 
 /// @brief Identifiers for physical particle species used in the simulation.

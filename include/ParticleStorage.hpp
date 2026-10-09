@@ -28,6 +28,9 @@ private:
     /// @brief Internal function for Swap-and-Pop on a single chunk
     void compact_chunk(Chunk& chunk);
 
+    /// @brief Internal function for Swap-and-Pop on a single species
+    void compact_species_chunks(SpeciesID species);
+
 public:
     explicit ParticleStorage(sycl::queue &q);
     ~ParticleStorage() = default;
@@ -54,6 +57,15 @@ public:
 
     /// @brief Returns the current number of allocated chunks for a given species.
     size_t get_chunk_count(SpeciesID species) const;
+
+    /// @brief Returns the total number of active particles across all species.
+    size_t get_total_count() const;
+
+    /// @brief Returns the total allocated VRAM capacity (in particle units) across all species.
+    size_t get_total_capacity() const;
+
+    /// @brief Returns the total number of allocated chunks across all species.
+    size_t get_chunk_count() const;
 
     /// @brief removing all marked particles for all species
     void free_marked_particles();

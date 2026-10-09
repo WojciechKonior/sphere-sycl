@@ -267,15 +267,9 @@ TEST_F(ChunkTest, MarkForRemovalInSYCLBuffer) {
 
     auto view = chunk.get_view();
 
-    // Submit kernel marking specific indices (2, 5, 8) concurrently on GPU
-    queue.submit([&](sycl::handler& cgh) {
-        cgh.parallel_for(sycl::range<1>(10), [=](sycl::id<1> idx) {
-            size_t id = idx[0];
-            if (id == 2 || id == 5 || id == 8) {
-                view.mark_for_removal(id);
-            }
-        });
-    }).wait();
+    view.mark_for_removal(queue, 2);
+    view.mark_for_removal(queue, 5);
+    view.mark_for_removal(queue, 8);
 
     // 1. Verify that dead counter recorded exactly 3 removals
     int32_t h_dead_count = 0;

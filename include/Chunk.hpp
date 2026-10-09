@@ -9,22 +9,32 @@ struct ChunkSoAView {
     float* px; float* py; float* pz;
     float* vx; float* vy; float* vz;
     size_t count;
+    size_t capacity;
     int32_t* d_dead_indices;
     int32_t* d_dead_count;
 
-    /// @brief Safe method to call from SYCL kernel / host thread.
-    void mark_for_removal(size_t local_idx) const {
-        // Atomic refference to dead particle counter
-        auto atomic_dead_count = sycl::atomic_ref<
-            int32_t, 
-            sycl::memory_order::relaxed, 
-            sycl::memory_scope::device, 
-            sycl::access::address_space::global_space
-        >(*d_dead_count);
+    /// @brief Host wrapper method that submits a single-task SYCL kernel to safely mark particle on GPU.
+    sycl::event mark_for_removal(sycl::queue &q, size_t local_idx) const {
+        if (!d_dead_count || !d_dead_indices){
+            std::cout << "[ERR!!!!!!!!!!]: d_dead_count " << d_dead_count << ", d_dead_indices: " << d_dead_indices << std::endl << std::endl;
+            return sycl::event();
+        }
+        auto* dead_count_ptr = d_dead_count;
+        auto* dead_indices_ptr = d_dead_indices;
 
-        // Unique slot in dead indices buffer
-        int32_t slot = atomic_dead_count.fetch_add(1);
-        d_dead_indices[slot] = static_cast<int32_t>(local_idx);
+        return q.submit([=](sycl::handler &cgh) {
+            cgh.single_task([=]() {
+                auto atomic_dead_count = sycl::atomic_ref<
+                    int32_t, 
+                    sycl::memory_order::relaxed, 
+                    sycl::memory_scope::device, 
+                    sycl::access::address_space::global_space
+                >(*dead_count_ptr);
+
+                int32_t slot = atomic_dead_count.fetch_add(1);
+                dead_indices_ptr[slot] = static_cast<int32_t>(local_idx);
+            });
+        });
     }
 };
 

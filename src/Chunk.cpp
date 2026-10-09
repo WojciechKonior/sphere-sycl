@@ -5,10 +5,7 @@ Chunk::Chunk(sycl::queue &q, size_t capacity)
       d_posX_(nullptr), d_posY_(nullptr), d_posZ_(nullptr),
       d_velX_(nullptr), d_velY_(nullptr), d_velZ_(nullptr)
 {
-    if (capacity_ == 0)
-    {
-        return;
-    }
+    if (capacity_ == 0) return;
 
     size_t bytes = capacity_ * sizeof(float);
 
@@ -20,14 +17,15 @@ Chunk::Chunk(sycl::queue &q, size_t capacity)
         d_velX_ = static_cast<float *>(sycl::malloc_device(bytes, q_));
         d_velY_ = static_cast<float *>(sycl::malloc_device(bytes, q_));
         d_velZ_ = static_cast<float *>(sycl::malloc_device(bytes, q_));
-        d_dead_indices_ = sycl::malloc_device<int32_t>(capacity_, q_);
-        d_dead_count_ = sycl::malloc_device<int32_t>(1, q_);
-        q_.memset(d_dead_count_, 0, sizeof(int32_t)).wait();
 
-        if (!d_posX_ || !d_posY_ || !d_posZ_ || !d_velX_ || !d_velY_ || !d_velZ_ || !d_dead_count_ || !d_dead_indices_)
-        {
-            throw std::bad_alloc();
-        }
+        d_dead_indices_ =   sycl::malloc_device<int32_t>(capacity_, q_);
+        d_dead_count_ =     sycl::malloc_device<int32_t>(1, q_);
+
+        if (!d_posX_ || !d_posY_ || !d_posZ_ || !d_velX_ || !d_velY_ || !d_velZ_ || !d_dead_count_ || !d_dead_indices_) { 
+            throw std::bad_alloc(); }
+
+        q_.memset(d_dead_count_, 0, sizeof(int32_t));
+        q_.memset(d_dead_indices_, 0, capacity_ * sizeof(int32_t)).wait();
     }
     catch (...)
     {
@@ -147,5 +145,6 @@ ChunkSoAView Chunk::get_view() const
     return ChunkSoAView{
         d_posX_, d_posY_, d_posZ_,
         d_velX_, d_velY_, d_velZ_,
-        count_, d_dead_indices_, d_dead_count_};
+        count_, capacity_,
+        d_dead_indices_, d_dead_count_};
 }

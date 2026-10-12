@@ -23,6 +23,17 @@ protected:
         }
     }
 
+    /**
+     * @brief Cleans up the test environment after each test execution.
+     */
+    void TearDown() override {
+        try {
+            q.wait();
+        } catch (const sycl::exception &e) {
+            ADD_FAILURE() << "SYCL exception during TearDown wait: " << e.what();
+        }
+    }
+
     void populate_chunk(Chunk& chunk, size_t num_particles) {
         chunk.set_count(num_particles);
         
@@ -881,3 +892,135 @@ TEST_F(ParticleStorageTest, VerifyMultiChunkTwoStageCompaction)
     }
 }
 
+/**
+ * @test VerifyMassRemovalWithinSingleChunk
+ * @brief Verifies that marking ALL particles in a specific chunk for removal is handled safely
+ *        without out-of-bounds access, and that the emptied chunk is released properly.
+ */
+TEST_F(ParticleStorageTest, VerifyMassRemovalWithinSingleChunk)
+{
+    ParticleStorage storage(q);
+    SpeciesID species = static_cast<SpeciesID>(0);
+
+    size_t chunk_cap = Constants::CHUNK_CAPACITY;
+    size_t num_particles = 2 * chunk_cap + 1; // 3 chunki
+    storage.allocate_space(species, num_particles);
+
+    auto views = storage.get_views(species);
+    ASSERT_EQ(views.size(), 3u);
+
+    // 1. Inicjalizacja danych w VRAM
+    for (size_t c = 0; c < views.size(); ++c)
+    {
+        auto &v = views[c];
+        float base_val = static_cast<float>(c + 1); // 1.0f, 2.0f, 3.0f
+
+        q.submit([&](sycl::handler &cgh) {
+            auto posX = v.px; auto posY = v.py; auto posZ = v.pz;
+            auto velX = v.vx; auto velY = v.vy; auto velZ = v.vz;
+            size_t cnt = v.count;
+
+            cgh.parallel_for(sycl::range<1>(cnt), [=](sycl::id<1> idx) {
+                posX[idx] = base_val + 0.0f;
+                posY[idx] = base_val + 0.1f;
+                posZ[idx] = base_val + 0.2f;
+                velX[idx] = base_val + 0.3f;
+                velY[idx] = base_val + 0.4f;
+                velZ[idx] = base_val + 0.5f;
+            });
+        }).wait();
+    }
+
+    // 2. MASOWE OZNACZANIE CZĄSTEK NA GPU (Jednym kernelem zamiast miliona wywołań w pętli CPU!)
+    auto &chunk_1_view = views[1];
+    size_t chunk_1_count = chunk_1_view.count;
+    EXPECT_EQ(chunk_1_count, Constants::CHUNK_CAPACITY);
+    const int32_t max_cap = static_cast<int32_t>(chunk_1_view.capacity);
+
+    q.memset(chunk_1_view.d_dead_count, 0, sizeof(int32_t)).wait();
+
+    // Wywołujemy pojedynczy wątek na GPU do oznaczenia indeksu 2
+    q.submit([&](sycl::handler &cgh) {
+        auto d_dead_count = chunk_1_view.d_dead_count;
+        auto d_dead_indices = chunk_1_view.d_dead_indices;
+
+        cgh.parallel_for(sycl::range<1>(chunk_1_count), [=](sycl::id<1> idx) {
+            chunk_1_view.mark_for_removal_device(idx[0]);
+        });
+    }).wait();
+
+    // 3. Wywołanie czyszczenia i kompaktacji
+    storage.free_marked_particles();
+
+    // 4. Weryfikacja liczników
+    size_t expected_total_particles = num_particles - chunk_1_count;
+    EXPECT_EQ(storage.get_total_count(species), expected_total_particles);
+
+    auto updated_views = storage.get_views(species);
+    // Jeden chunk powinien zostać całkowicie wyeliminowany z kontenera
+    ASSERT_EQ(updated_views.size(), 2u);
+    EXPECT_EQ(updated_views[0].count, chunk_cap);
+    EXPECT_EQ(updated_views[1].count, 1u);
+
+    // 5. Weryfikacja spójności danych SoA
+    std::vector<float> h_px(chunk_cap);
+    q.memcpy(h_px.data(), updated_views[0].px, chunk_cap * sizeof(float)).wait();
+    for (size_t i = 0; i < chunk_cap; ++i)
+    {
+        EXPECT_FLOAT_EQ(h_px[i], 1.0f);
+    }
+
+    float h_px_last_chunk = 0.0f;
+    q.memcpy(&h_px_last_chunk, updated_views[1].px, sizeof(float)).wait();
+    EXPECT_FLOAT_EQ(h_px_last_chunk, 3.0f);
+}
+
+// /**
+//  * @brief Verifies that calling mark_for_removal_device multiple times from a GPU kernel 
+//  *        for the same particles correctly results in a safe single removal during compaction.
+//  */
+// TEST_F(ParticleStorageTest, MarkForRemovalDeviceDuplicateSafety) {
+//     ParticleStorage storage(q);
+//     SpeciesID species = static_cast<SpeciesID>(1); // Adjust according to your Species enum values
+
+//     // 1. Allocate space for initial particles to populate a chunk
+//     size_t initial_particles_count = 10;
+//     auto segments = storage.allocate_space(species, initial_particles_count);
+//     ASSERT_FALSE(segments.empty());
+
+//     // Retrieve chunk views to access device-side methods and buffers
+//     auto views = storage.get_views(species);
+//     ASSERT_FALSE(views.empty());
+//     auto &chunk_view = views[0];
+
+//     // Ensure dead count starts at zero
+//     q.memset(chunk_view.d_dead_count, 0, sizeof(int32_t)).wait();
+
+//     // 2. Submit a SYCL kernel simulating a physics/collision pass 
+//     // where particle index 3 is marked 3 times, and particle index 7 is marked 2 times.
+//     q.submit([&](sycl::handler &cgh) {
+//         cgh.parallel_for(sycl::range<1>(5), [=](sycl::id<1> idx) {
+//             size_t i = idx[0];
+//             if (i < 3) {
+//                 chunk_view.mark_for_removal_device(3); // Mark particle 3 three times
+//             } else {
+//                 chunk_view.mark_for_removal_device(7); // Mark particle 7 two times
+//             }
+//         });
+//     }).wait();
+
+//     size_t count_before_compaction = storage.get_total_count(species); // Should be 10
+
+//     // 3. Trigger compaction and particle removal via the storage API
+//     storage.free_marked_particles(species);
+
+//     // 4. Verification:
+//     // Even though mark_for_removal_device was called 5 times total, only 2 unique 
+//     // particles (3 and 7) were targeted. The total count should drop by exactly 2 (from 10 to 8).
+//     EXPECT_EQ(storage.get_total_count(species), count_before_compaction - 2);
+
+//     // Verify that the internal device dead count was properly reset to 0 after compaction
+//     int32_t final_dead_count = -1;
+//     q.memcpy(&final_dead_count, chunk_view.d_dead_count, sizeof(int32_t)).wait();
+//     EXPECT_EQ(final_dead_count, 0);
+// }

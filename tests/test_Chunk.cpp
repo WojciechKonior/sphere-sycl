@@ -21,6 +21,17 @@ protected:
             FAIL() << "Failed to create SYCL queue: " << e.what();
         }
     }
+
+    /**
+     * @brief Cleans up the test environment after each test execution.
+     */
+    void TearDown() override {
+        try {
+            queue.wait();
+        } catch (const sycl::exception &e) {
+            ADD_FAILURE() << "SYCL exception during TearDown wait: " << e.what();
+        }
+    }
 };
 
 /**
@@ -264,12 +275,15 @@ TEST_F(ChunkTest, InitializationAllocatesBuffers) {
 TEST_F(ChunkTest, MarkForRemovalInSYCLBuffer) {
     const size_t capacity = 100;
     Chunk chunk(queue, capacity);
+    chunk.set_count(10);
 
     auto view = chunk.get_view();
 
     view.mark_for_removal(queue, 2);
     view.mark_for_removal(queue, 5);
     view.mark_for_removal(queue, 8);
+
+    queue.wait();
 
     // 1. Verify that dead counter recorded exactly 3 removals
     int32_t h_dead_count = 0;
@@ -285,6 +299,81 @@ TEST_F(ChunkTest, MarkForRemovalInSYCLBuffer) {
     EXPECT_EQ(h_dead_indices[0], 2);
     EXPECT_EQ(h_dead_indices[1], 5);
     EXPECT_EQ(h_dead_indices[2], 8);
+}
+
+/**
+ * @test Verifies that attempting to mark an out-of-bounds or non-existent particle 
+ *       is safely rejected without modifying d_dead_count or causing device errors.
+ */
+TEST_F(ChunkTest, MarkNonExistentParticleSafety) {
+    const size_t capacity = 100;
+    Chunk chunk(queue, capacity);
+
+    // 1. Sztucznie ustawiamy 5 aktywnych cząstek (prawidłowe indeksy: 0, 1, 2, 3, 4)
+    chunk.set_count(5);
+
+    auto view = chunk.get_view();
+
+    // Upewniamy się, że licznik martwych cząstek jest wyzerowany na GPU
+    queue.memset(view.d_dead_count, 0, sizeof(int32_t)).wait();
+
+    // 2. Próbujemy oznaczyć prawidłową cząstkę (indeks 2) oraz NIEISTNIEJĄCE (indeksy 5, 10, 999)
+    view.mark_for_removal(queue, 2);   // VALID (2 < 5)
+    view.mark_for_removal(queue, 5);   // INVALID (5 >= 5 - pierwsza nieistniejąca cząstka)
+    view.mark_for_removal(queue, 10);  // INVALID (10 >= 5)
+    view.mark_for_removal(queue, 999); // INVALID (OOB poza capacity)
+
+    queue.wait();
+
+    // 3. Weryfikacja: Tylko 1 prawidłowa cząstka powinna zostać zarejestrowana
+    int32_t h_dead_count = 0;
+    queue.memcpy(&h_dead_count, view.d_dead_count, sizeof(int32_t)).wait();
+    EXPECT_EQ(h_dead_count, 1);
+
+    // 4. Odczytujemy indeks z bufora na GPU i sprawdzamy, czy to dokładnie indeks 2
+    int32_t h_dead_index = -1;
+    queue.memcpy(&h_dead_index, view.d_dead_indices, sizeof(int32_t)).wait();
+    EXPECT_EQ(h_dead_index, 2);
+}
+
+/**
+ * @test Verifies that marking the same particle multiple times for removal 
+ *       does not duplicate its index in d_dead_indices or increment d_dead_count multiple times.
+ */
+TEST_F(ChunkTest, MarkDuplicateParticleSafety) {
+    const size_t capacity = 100;
+    Chunk chunk(queue, capacity);
+
+    // Sztucznie ustawiamy 10 aktywnych cząstek w chunku
+    chunk.set_count(10);
+
+    auto view = chunk.get_view();
+
+    // Zerujemy licznik na GPU
+    queue.memset(view.d_dead_count, 0, sizeof(int32_t)).wait();
+
+    // 1. Oznaczamy cząstkę 3 trzykrotnie oraz cząstkę 7 dwukrotnie
+    view.mark_for_removal(queue, 3);
+    view.mark_for_removal(queue, 3);
+    view.mark_for_removal(queue, 3);
+
+    view.mark_for_removal(queue, 7);
+    view.mark_for_removal(queue, 7);
+
+    queue.wait();
+
+    // 2. Weryfikacja: Mimo 5 wywołań zarejestrowane powinny zostać tylko 2 unikalne cząstki
+    int32_t h_dead_count = 0;
+    queue.memcpy(&h_dead_count, view.d_dead_count, sizeof(int32_t)).wait();
+    EXPECT_EQ(h_dead_count, 2);
+
+    // 3. Sprawdzamy zawartość bufora indeksów
+    std::vector<int32_t> h_dead_indices(2);
+    queue.memcpy(h_dead_indices.data(), view.d_dead_indices, 2 * sizeof(int32_t)).wait();
+
+    std::sort(h_dead_indices.begin(), h_dead_indices.end());
+    EXPECT_EQ(h_dead_indices[0], 3);
+    EXPECT_EQ(h_dead_indices[1], 7);
 }
 
 /**

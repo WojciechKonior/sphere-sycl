@@ -25,7 +25,8 @@ Chunk::Chunk(sycl::queue &q, size_t capacity)
             throw std::bad_alloc(); }
 
         q_.memset(d_dead_count_, 0, sizeof(int32_t));
-        q_.memset(d_dead_indices_, 0, capacity_ * sizeof(int32_t)).wait();
+        q_.memset(d_dead_indices_, 0, capacity_ * sizeof(int32_t));
+        q_.wait();
     }
     catch (...)
     {
@@ -46,7 +47,9 @@ Chunk::Chunk(Chunk &&other) noexcept
       d_posZ_(std::exchange(other.d_posZ_, nullptr)),
       d_velX_(std::exchange(other.d_velX_, nullptr)),
       d_velY_(std::exchange(other.d_velY_, nullptr)),
-      d_velZ_(std::exchange(other.d_velZ_, nullptr)) {}
+      d_velZ_(std::exchange(other.d_velZ_, nullptr)),
+      d_dead_count_(std::exchange(other.d_dead_count_, nullptr)),
+      d_dead_indices_(std::exchange(other.d_dead_indices_, nullptr)) {}
 
 Chunk &Chunk::operator=(Chunk &&other) noexcept
 {
@@ -64,6 +67,8 @@ Chunk &Chunk::operator=(Chunk &&other) noexcept
         d_velX_ = std::exchange(other.d_velX_, nullptr);
         d_velY_ = std::exchange(other.d_velY_, nullptr);
         d_velZ_ = std::exchange(other.d_velZ_, nullptr);
+        d_dead_count_ = std::exchange(other.d_dead_count_, nullptr);
+        d_dead_indices_ = std::exchange(other.d_dead_indices_, nullptr);
     }
     return *this;
 }
@@ -105,12 +110,12 @@ void Chunk::release(sycl::queue &q)
         }
         if (d_dead_indices_)
         {
-            sycl::free(d_dead_indices_, q_);
+            sycl::free(d_dead_indices_, q);
             d_dead_indices_ = nullptr;
         }
         if (d_dead_count_)
         {
-            sycl::free(d_dead_count_, q_);
+            sycl::free(d_dead_count_, q);
             d_dead_count_ = nullptr;
         }
     }

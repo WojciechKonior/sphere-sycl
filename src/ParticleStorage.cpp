@@ -135,60 +135,63 @@ size_t ParticleStorage::get_chunk_count() const
 
 void ParticleStorage::compact_chunk(Chunk& chunk) {
     int32_t dead_count = 0;
-
-    // 1. Kopiujemy TYLKO 1 int (bardzo tani transfer), żeby sprawdzić czy są martwe cząstki
     q_.memcpy(&dead_count, chunk.d_dead_count_, sizeof(int32_t)).wait();
 
-    if (dead_count == 0) return;
+    if (dead_count <= 0) return;
 
     dead_count = std::min(dead_count, static_cast<int32_t>(chunk.count()));
     size_t total_count = chunk.count();
-
-    // 2. Alokujemy bufor na przesunięciatymczasowo na GPU (Stream Compaction / Swap-and-Pop na GPU)
+    
+    
+    // Alokacja bufora roboczego na przemieszczenia
     auto* d_moves = sycl::malloc_device<std::pair<int32_t, int32_t>>(dead_count, q_);
     auto* d_move_count = sycl::malloc_device<int32_t>(1, q_);
     q_.memset(d_move_count, 0, sizeof(int32_t)).wait();
 
-    // 3. Kernel na GPU: Dopasowuje wolne sloty z lewej strony do żywych cząstek z prawej strony
-    // (Odpowiednik Swap-and-Pop na GPU bez udziału CPU)
+    // RÓWNOLEGŁY KERNEL: Każdy wątek obsługuje JEDNĄ martwą cząstkę!
     q_.submit([&](sycl::handler& cgh) {
         auto* dead_indices = chunk.d_dead_indices_;
 
-        cgh.parallel_for(sycl::range<1>(1), [=](sycl::id<1>) {
-            int32_t source_ptr = static_cast<int32_t>(total_count) - 1;
+        cgh.parallel_for(sycl::range<1>(dead_count), [=](sycl::id<1> idx) {
+            int32_t i = static_cast<int32_t>(idx[0]);
+            int32_t target_slot = dead_indices[i];
 
-            for (int i = 0; i < dead_count; ++i) {
-                int32_t target_slot = dead_indices[i];
+            // Kandydat na źródło: bierzemy cząstkę z samego końca chunka
+            int32_t source_candidate = static_cast<int32_t>(total_count) - 1 - i;
 
-                // Szukamy najbliższej żywej cząstki od końca chunka
-                while (source_ptr > target_slot) {
-                    bool is_dead = false;
-                    for (int j = 0; j < dead_count; ++j) {
-                        if (dead_indices[j] == source_ptr) {
-                            is_dead = true;
-                            break;
-                        }
+            // Kopiujemy tylko wtedy, gdy źródło leży z prawej strony "dziury"
+            if (source_candidate > target_slot) {
+                // Sprawdzamy czy candidate też nie jest martwy za pomocą Binary Search O(log N)
+                bool source_is_dead = false;
+                int left = 0, right = dead_count - 1;
+                while (left <= right) {
+                    int mid = left + (right - left) / 2;
+                    if (dead_indices[mid] == source_candidate) {
+                        source_is_dead = true;
+                        break;
                     }
-                    if (!is_dead) break;
-                    source_ptr--;
+                    if (dead_indices[mid] < source_candidate) left = mid + 1;
+                    else right = mid - 1;
                 }
 
-                if (source_ptr > target_slot) {
-                    int32_t idx = d_move_count[0]++;
-                    d_moves[idx] = {target_slot, source_ptr};
-                    source_ptr--;
-                } else {
-                    break;
+                // Jeśli źródłowa cząstka jest żywa, rejestrujemy przesunięcie
+                if (!source_is_dead) {
+                    auto atomic_cnt = sycl::atomic_ref<int32_t, 
+                        sycl::memory_order::relaxed, 
+                        sycl::memory_scope::device, 
+                        sycl::access::address_space::global_space>(d_move_count[0]);
+                    
+                    int move_slot = atomic_cnt.fetch_add(1);
+                    d_moves[move_slot] = {target_slot, source_candidate};
                 }
             }
         });
     }).wait();
 
-    // 4. Pobieramy liczbę faktycznych przesunięć
     int32_t num_moves = 0;
     q_.memcpy(&num_moves, d_move_count, sizeof(int32_t)).wait();
 
-    // 5. Wykonujemy przemieszczenie danych na GPU dla pól SoA
+    // Równoległe kopiowanie danych SoA
     if (num_moves > 0) {
         q_.submit([&](sycl::handler& cgh) {
             auto posX = chunk.d_posX_; auto posY = chunk.d_posY_; auto posZ = chunk.d_posZ_;
@@ -210,7 +213,6 @@ void ParticleStorage::compact_chunk(Chunk& chunk) {
         }).wait();
     }
 
-    // Sprzątamy bufor roboczy i resetujemy stan
     sycl::free(d_moves, q_);
     sycl::free(d_move_count, q_);
 

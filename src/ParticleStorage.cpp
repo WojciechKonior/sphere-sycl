@@ -147,51 +147,64 @@ void ParticleStorage::compact_chunk(Chunk& chunk) {
     auto* d_move_count = sycl::malloc_device<int32_t>(1, q_);
     q_.memset(d_move_count, 0, sizeof(int32_t)).wait();
 
+    auto* d_source_cursor = sycl::malloc_device<int32_t>(1, q_);
+    int32_t initial_cursor = static_cast<int32_t>(total_count) - 1;
+    q_.memcpy(d_source_cursor, &initial_cursor, sizeof(int32_t)).wait();
+
     // RÓWNOLEGŁY KERNEL: Każdy wątek obsługuje JEDNĄ martwą cząstkę!
     q_.submit([&](sycl::handler& cgh) {
         auto* dead_indices = chunk.d_dead_indices_;
         auto* d_is_dead = chunk.d_is_dead_;
+        size_t new_count = total_count - dead_count;
 
         cgh.parallel_for(sycl::range<1>(dead_count), [=](sycl::id<1> idx) {
             int32_t i = static_cast<int32_t>(idx[0]);
             int32_t target_slot = dead_indices[i];
 
             // Jeśli target_slot jest poza aktualnym zakresem, pomijamy
-            if (target_slot < 0 || target_slot >= static_cast<int32_t>(total_count)) {
+            if (target_slot < 0 || target_slot >= static_cast<int32_t>(new_count)) {
                 return;
             }
 
-            // Kandydat na źródło: bierzemy cząstkę z samego końca chunka
-            int32_t source_candidate = static_cast<int32_t>(total_count) - 1 - i;
+            int32_t source_candidate = -1;
 
-            // Kopiujemy tylko wtedy, gdy źródło leży z prawej strony "dziury"
-            if (source_candidate > target_slot) {
-                // Sprawdzamy czy źródłowy kandydat też nie jest martwy w O(1) przez bitmaskę
-                size_t word_idx = static_cast<size_t>(source_candidate) / 32;
-                uint32_t bit_mask = 1u << (static_cast<size_t>(source_candidate) % 32);
-                bool source_is_dead = (d_is_dead[word_idx] & bit_mask) != 0;
+            // Pętla zaklepywania: atomowo bierzemy cząstkę z końca i sprawdzamy, czy jest żywa
+            while (true) {
+                auto cursor_ref = sycl::atomic_ref<int32_t, 
+                    sycl::memory_order::relaxed, 
+                    sycl::memory_scope::device, 
+                    sycl::access::address_space::global_space>(*d_source_cursor);
+                
+                // Atomowo "zaklepujemy" kolejną cząstkę idąc od prawej strony w lewo
+                int32_t cand = cursor_ref.fetch_sub(1);
 
-                // Jeśli wylosowany kandydat z tyłu jest martwy, musimy cofnąć się dalej w lewo,
-                // żeby znaleźć pierwszą żywą cząstkę. 
-                // Możemy to zrobić krótką pętlą (w najgorszym razie przeszukuje kilka bitów wstecz):
-                while (source_is_dead && source_candidate > target_slot) {
-                    source_candidate--;
-                    word_idx = static_cast<size_t>(source_candidate) / 32;
-                    bit_mask = 1u << (static_cast<size_t>(source_candidate) % 32);
-                    source_is_dead = (d_is_dead[word_idx] & bit_mask) != 0;
+                // Jeśli kursor zszedł się z dziurą lub przeszedł na lewo od niej, brak źródeł
+                if (cand <= target_slot) {
+                    break;
                 }
 
-                // Jeśli źródłowa cząstka jest żywa, rejestrujemy przesunięcie
-                // if (!source_is_dead) {
-                if (!source_is_dead && source_candidate > target_slot) {
-                    auto atomic_cnt = sycl::atomic_ref<int32_t, 
-                        sycl::memory_order::relaxed, 
-                        sycl::memory_scope::device, 
-                        sycl::access::address_space::global_space>(d_move_count[0]);
-                    
-                    int move_slot = atomic_cnt.fetch_add(1);
-                    d_moves[move_slot] = {target_slot, source_candidate};
+                // Sprawdzamy czy zaklepany kandydat jest żywy w O(1) przez bitmaskę
+                size_t word_idx = static_cast<size_t>(cand) / 32;
+                uint32_t bit_mask = 1u << (static_cast<size_t>(cand) % 32);
+                bool is_dead = (d_is_dead[word_idx] & bit_mask) != 0;
+
+                // Jeśli kandydat jest żywy, to jest nasze źródło! Zaklepane!
+                if (!is_dead) {
+                    source_candidate = cand;
+                    break;
                 }
+                // Jeśli kandydat był martwy, pętla kręci się dalej i bierze kolejny z lewej.
+            }
+
+            // Jeśli znaleźliśmy unikalne, żywe źródło, rejestrujemy przesunięcie
+            if (source_candidate != -1) {
+                auto atomic_cnt = sycl::atomic_ref<int32_t, 
+                    sycl::memory_order::relaxed, 
+                    sycl::memory_scope::device, 
+                    sycl::access::address_space::global_space>(*d_move_count);
+                
+                int move_slot = atomic_cnt.fetch_add(1);
+                d_moves[move_slot] = {target_slot, source_candidate};
             }
         });
     }).wait();
@@ -223,6 +236,7 @@ void ParticleStorage::compact_chunk(Chunk& chunk) {
 
     sycl::free(d_moves, q_);
     sycl::free(d_move_count, q_);
+    sycl::free(d_source_cursor, q_);
 
     chunk.set_count(chunk.count() - dead_count);
     q_.memset(chunk.d_dead_count_, 0, sizeof(int32_t));

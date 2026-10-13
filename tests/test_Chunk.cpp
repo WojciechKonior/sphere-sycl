@@ -337,46 +337,6 @@ TEST_F(ChunkTest, MarkNonExistentParticleSafety) {
 }
 
 /**
- * @test Verifies that marking the same particle multiple times for removal 
- *       does not duplicate its index in d_dead_indices or increment d_dead_count multiple times.
- */
-TEST_F(ChunkTest, MarkDuplicateParticleSafety) {
-    const size_t capacity = 100;
-    Chunk chunk(queue, capacity);
-
-    // Sztucznie ustawiamy 10 aktywnych cząstek w chunku
-    chunk.set_count(10);
-
-    auto view = chunk.get_view();
-
-    // Zerujemy licznik na GPU
-    queue.memset(view.d_dead_count, 0, sizeof(int32_t)).wait();
-
-    // 1. Oznaczamy cząstkę 3 trzykrotnie oraz cząstkę 7 dwukrotnie
-    view.mark_for_removal(queue, 3);
-    view.mark_for_removal(queue, 3);
-    view.mark_for_removal(queue, 3);
-
-    view.mark_for_removal(queue, 7);
-    view.mark_for_removal(queue, 7);
-
-    queue.wait();
-
-    // 2. Weryfikacja: Mimo 5 wywołań zarejestrowane powinny zostać tylko 2 unikalne cząstki
-    int32_t h_dead_count = 0;
-    queue.memcpy(&h_dead_count, view.d_dead_count, sizeof(int32_t)).wait();
-    EXPECT_EQ(h_dead_count, 2);
-
-    // 3. Sprawdzamy zawartość bufora indeksów
-    std::vector<int32_t> h_dead_indices(2);
-    queue.memcpy(h_dead_indices.data(), view.d_dead_indices, 2 * sizeof(int32_t)).wait();
-
-    std::sort(h_dead_indices.begin(), h_dead_indices.end());
-    EXPECT_EQ(h_dead_indices[0], 3);
-    EXPECT_EQ(h_dead_indices[1], 7);
-}
-
-/**
  * @test Verifies that ChunkSoAView accurately reflects active particle count.
  */
 TEST_F(ChunkTest, ViewReflectsActiveCount) {
@@ -418,4 +378,188 @@ TEST_F(ChunkTest, SetCountUpdatesActiveParticleCount) {
     chunk.set_count(capacity);
     EXPECT_EQ(chunk.count(), capacity);
     EXPECT_EQ(chunk.get_view().count, capacity);
+}
+
+/**
+ * @brief Tests the allocation, property verification, and graceful deallocation of a Chunk.
+ */
+TEST_F(ChunkTest, AllocationAndDeallocation) {
+    {
+        size_t capacity = 1024;
+        Chunk chunk(queue, capacity);
+        
+        // Sprawdź czy capacity i count są poprawne
+        EXPECT_EQ(chunk.capacity(), capacity);
+        EXPECT_EQ(chunk.count(), 0);
+
+        // Sprawdź czy widok poprawnie odzwierciedla wskaźniki
+        ChunkSoAView view = chunk.get_view();
+        EXPECT_NE(view.d_is_dead, nullptr);
+        EXPECT_NE(view.px, nullptr);
+        EXPECT_EQ(view.capacity, capacity);
+        EXPECT_EQ(view.count, 0);
+    } 
+    // Po wyjściu ze scope destruktor wywoła release(). 
+    // W SYCL brak rzucania wyjątku i poprawne przejście oznacza brak problemów z pamięcią.
+    SUCCEED();
+}
+
+/**
+ * @brief Tests the move constructor of the Chunk class.
+ */
+TEST_F(ChunkTest, MoveConstructor) {
+    size_t capacity = 512;
+
+    Chunk chunk1(queue, capacity);
+    ChunkSoAView view1 = chunk1.get_view();
+    uint32_t* original_is_dead = view1.d_is_dead;
+
+    // Przeniesienie konstruktorem przenoszącym
+    Chunk chunk2(std::move(chunk1));
+
+    EXPECT_EQ(chunk2.capacity(), capacity);
+    
+    // Sprawdź czy wskaźniki przeszły do chunk2
+    ChunkSoAView view2 = chunk2.get_view();
+    EXPECT_EQ(view2.d_is_dead, original_is_dead);
+
+    // Sprawdź czy chunk1 został wyczyszczony (wskaźniki na nullptr przez std::exchange)
+    ChunkSoAView view1_after = chunk1.get_view();
+    EXPECT_EQ(view1_after.d_is_dead, nullptr);
+}
+
+/**
+ * @brief Tests the move assignment operator of the Chunk class.
+ */
+TEST_F(ChunkTest, MoveAssignment) {
+    Chunk chunk1(queue, 256);
+    Chunk chunk2(queue, 128);
+
+    ChunkSoAView view1 = chunk1.get_view();
+    uint32_t* original_is_dead1 = view1.d_is_dead;
+
+    // Przypisanie przenoszące
+    chunk2 = std::move(chunk1);
+
+    EXPECT_EQ(chunk2.capacity(), 256);
+    EXPECT_EQ(chunk2.get_view().d_is_dead, original_is_dead1);
+    EXPECT_EQ(chunk1.get_view().d_is_dead, nullptr);
+}
+
+/**
+ * @brief Tests that `ChunkSoAView` accurately exposes all structural component pointers and updated metadata.
+ */
+TEST_F(ChunkTest, GetViewPointersMatch) {
+    Chunk chunk(queue, 64);
+    
+    // Modyfikacja count i sprawdzenie czy view to odzwierciedla
+    chunk.set_count(32);
+    
+    ChunkSoAView view = chunk.get_view();
+    EXPECT_EQ(view.count, 32);
+    EXPECT_EQ(view.capacity, 64);
+    
+    // Sprawdź czy wszystkie wskaźniki w view są różne od nullptr
+    EXPECT_NE(view.px, nullptr);
+    EXPECT_NE(view.py, nullptr);
+    EXPECT_NE(view.pz, nullptr);
+    EXPECT_NE(view.vx, nullptr);
+    EXPECT_NE(view.vy, nullptr);
+    EXPECT_NE(view.vz, nullptr);
+    EXPECT_NE(view.d_dead_indices, nullptr);
+    EXPECT_NE(view.d_dead_count, nullptr);
+    EXPECT_NE(view.d_is_dead, nullptr);
+}
+
+/**
+ * @test Verifies that marking the same particle multiple times for removal 
+ *       does not duplicate its index in d_dead_indices or increment d_dead_count multiple times.
+ */
+TEST_F(ChunkTest, MarkDuplicateParticleSafety) {
+    const size_t capacity = 100;
+    Chunk chunk(queue, capacity);
+
+    // Sztucznie ustawiamy 10 aktywnych cząstek w chunku
+    chunk.set_count(10);
+
+    auto view = chunk.get_view();
+
+    // Zerujemy licznik na GPU
+    queue.memset(view.d_dead_count, 0, sizeof(int32_t)).wait();
+
+    // 1. Oznaczamy cząstkę 3 trzykrotnie oraz cząstkę 7 dwukrotnie
+    view.mark_for_removal(queue, 3);
+    view.mark_for_removal(queue, 3);
+    view.mark_for_removal(queue, 3);
+
+    view.mark_for_removal(queue, 7);
+    view.mark_for_removal(queue, 7);
+
+    queue.wait();
+
+    // 2. Weryfikacja: Mimo 5 wywołań zarejestrowane powinny zostać tylko 2 unikalne cząstki
+    int32_t h_dead_count = 0;
+    queue.memcpy(&h_dead_count, view.d_dead_count, sizeof(int32_t)).wait();
+    EXPECT_EQ(h_dead_count, 2);
+
+    // 3. Sprawdzamy zawartość bufora indeksów
+    std::vector<int32_t> h_dead_indices(2);
+    queue.memcpy(h_dead_indices.data(), view.d_dead_indices, 2 * sizeof(int32_t)).wait();
+
+    std::sort(h_dead_indices.begin(), h_dead_indices.end());
+    EXPECT_EQ(h_dead_indices[0], 3);
+    EXPECT_EQ(h_dead_indices[1], 7);
+}
+
+/**
+ * @brief Tests particle marking for removal, verifying both the bitmask (d_is_dead_) and d_dead_indices_.
+ */
+TEST_F(ChunkTest, MarkForRemovalBitmaskAndIndices) {
+    size_t capacity = 64;
+    Chunk chunk(queue, capacity);
+    
+    // Ustawiamy np. 10 aktywnych cząstek w chunku
+    size_t active_count = 10;
+    chunk.set_count(active_count);
+
+    ChunkSoAView view = chunk.get_view();
+
+    // 1. Oznaczamy cząstki o indeksach 2 i 5 do usunięcia
+    ASSERT_NO_THROW({
+        view.mark_for_removal(queue, 2).wait();
+        view.mark_for_removal(queue, 5).wait();
+    });
+
+    // 2. Próbujemy oznaczyć cząstkę 2 ponownie (duplikat - powinna zostać zignorowana)
+    ASSERT_NO_THROW({
+        view.mark_for_removal(queue, 2).wait();
+    });
+
+    // 3. Sprawdzamy licznik martwych cząstek (d_dead_count) na hoście
+    int32_t h_dead_count = -1;
+    queue.memcpy(&h_dead_count, view.d_dead_count, sizeof(int32_t)).wait();
+    EXPECT_EQ(h_dead_count, 2); // Powinny być dokładnie 2 unikalne zgłoszenia
+
+    // 4. Sprawdzamy bitmaskę (d_is_dead_) na hoście
+    // Ponieważ d_is_dead_ to uint32_t*, dla capacity 64 potrzebujemy 2 słów (2 * 32 = 64 bity)
+    size_t num_words = (capacity + 31) / 32;
+    std::vector<uint32_t> h_dead_bits(num_words, 0);
+    queue.memcpy(h_dead_bits.data(), view.d_is_dead, num_words * sizeof(uint32_t)).wait();
+
+    // Weryfikacja bitów dla indeksów 2 i 5 (są w pierwszym słowie, word_idx = 0)
+    EXPECT_TRUE((h_dead_bits[0] & (1u << 2)) != 0) << "Particle 2 bit should be set!";
+    EXPECT_TRUE((h_dead_bits[0] & (1u << 5)) != 0) << "Particle 5 bit should be set!";
+    
+    // Weryfikacja, że inna cząstka (np. 3) NIE jest oznaczona
+    EXPECT_FALSE((h_dead_bits[0] & (1u << 3)) != 0) << "Particle 3 bit should remain unset!";
+
+    // 5. Sprawdzamy tablicę indeksów (d_dead_indices) na hoście
+    std::vector<int32_t> h_dead_indices(h_dead_count, -1);
+    queue.memcpy(h_dead_indices.data(), view.d_dead_indices, h_dead_count * sizeof(int32_t)).wait();
+
+    // Indeksy powinny zawierać 2 i 5 (kolejność może zależeć od momentu wykonania, ale elementy muszą się zgadzać)
+    std::vector<int32_t> expected_indices = {2, 5};
+    std::sort(h_dead_indices.begin(), h_dead_indices.end());
+    
+    EXPECT_EQ(h_dead_indices, expected_indices);
 }

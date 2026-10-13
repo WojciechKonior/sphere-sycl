@@ -142,7 +142,6 @@ void ParticleStorage::compact_chunk(Chunk& chunk) {
     dead_count = std::min(dead_count, static_cast<int32_t>(chunk.count()));
     size_t total_count = chunk.count();
     
-    
     // Alokacja bufora roboczego na przemieszczenia
     auto* d_moves = sycl::malloc_device<std::pair<int32_t, int32_t>>(dead_count, q_);
     auto* d_move_count = sycl::malloc_device<int32_t>(1, q_);
@@ -151,31 +150,40 @@ void ParticleStorage::compact_chunk(Chunk& chunk) {
     // RÓWNOLEGŁY KERNEL: Każdy wątek obsługuje JEDNĄ martwą cząstkę!
     q_.submit([&](sycl::handler& cgh) {
         auto* dead_indices = chunk.d_dead_indices_;
+        auto* d_is_dead = chunk.d_is_dead_;
 
         cgh.parallel_for(sycl::range<1>(dead_count), [=](sycl::id<1> idx) {
             int32_t i = static_cast<int32_t>(idx[0]);
             int32_t target_slot = dead_indices[i];
+
+            // Jeśli target_slot jest poza aktualnym zakresem, pomijamy
+            if (target_slot < 0 || target_slot >= static_cast<int32_t>(total_count)) {
+                return;
+            }
 
             // Kandydat na źródło: bierzemy cząstkę z samego końca chunka
             int32_t source_candidate = static_cast<int32_t>(total_count) - 1 - i;
 
             // Kopiujemy tylko wtedy, gdy źródło leży z prawej strony "dziury"
             if (source_candidate > target_slot) {
-                // Sprawdzamy czy candidate też nie jest martwy za pomocą Binary Search O(log N)
-                bool source_is_dead = false;
-                int left = 0, right = dead_count - 1;
-                while (left <= right) {
-                    int mid = left + (right - left) / 2;
-                    if (dead_indices[mid] == source_candidate) {
-                        source_is_dead = true;
-                        break;
-                    }
-                    if (dead_indices[mid] < source_candidate) left = mid + 1;
-                    else right = mid - 1;
+                // Sprawdzamy czy źródłowy kandydat też nie jest martwy w O(1) przez bitmaskę
+                size_t word_idx = static_cast<size_t>(source_candidate) / 32;
+                uint32_t bit_mask = 1u << (static_cast<size_t>(source_candidate) % 32);
+                bool source_is_dead = (d_is_dead[word_idx] & bit_mask) != 0;
+
+                // Jeśli wylosowany kandydat z tyłu jest martwy, musimy cofnąć się dalej w lewo,
+                // żeby znaleźć pierwszą żywą cząstkę. 
+                // Możemy to zrobić krótką pętlą (w najgorszym razie przeszukuje kilka bitów wstecz):
+                while (source_is_dead && source_candidate > target_slot) {
+                    source_candidate--;
+                    word_idx = static_cast<size_t>(source_candidate) / 32;
+                    bit_mask = 1u << (static_cast<size_t>(source_candidate) % 32);
+                    source_is_dead = (d_is_dead[word_idx] & bit_mask) != 0;
                 }
 
                 // Jeśli źródłowa cząstka jest żywa, rejestrujemy przesunięcie
-                if (!source_is_dead) {
+                // if (!source_is_dead) {
+                if (!source_is_dead && source_candidate > target_slot) {
                     auto atomic_cnt = sycl::atomic_ref<int32_t, 
                         sycl::memory_order::relaxed, 
                         sycl::memory_scope::device, 
@@ -217,7 +225,15 @@ void ParticleStorage::compact_chunk(Chunk& chunk) {
     sycl::free(d_move_count, q_);
 
     chunk.set_count(chunk.count() - dead_count);
-    q_.memset(chunk.d_dead_count_, 0, sizeof(int32_t)).wait();
+    q_.memset(chunk.d_dead_count_, 0, sizeof(int32_t));
+
+    // Czyszczenie bitmaski na kolejny krok symulacji
+    size_t num_word_bits = (chunk.capacity() + 31) / 32;
+    if (num_word_bits > 0) {
+        q_.memset(chunk.d_is_dead_, 0, num_word_bits * sizeof(uint32_t));
+    }
+
+    q_.wait();
 }
 
 void ParticleStorage::compact_species_chunks(SpeciesID species)

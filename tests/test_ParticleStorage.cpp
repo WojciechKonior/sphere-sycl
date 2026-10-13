@@ -975,52 +975,308 @@ TEST_F(ParticleStorageTest, VerifyMassRemovalWithinSingleChunk)
     EXPECT_FLOAT_EQ(h_px_last_chunk, 3.0f);
 }
 
-// /**
-//  * @brief Verifies that calling mark_for_removal_device multiple times from a GPU kernel 
-//  *        for the same particles correctly results in a safe single removal during compaction.
-//  */
-// TEST_F(ParticleStorageTest, MarkForRemovalDeviceDuplicateSafety) {
-//     ParticleStorage storage(q);
-//     SpeciesID species = static_cast<SpeciesID>(1); // Adjust according to your Species enum values
+/**
+ * @brief Verifies that calling mark_for_removal_device multiple times from a GPU kernel 
+ *        for the same particles correctly results in a safe single removal during compaction.
+ */
+TEST_F(ParticleStorageTest, MarkForRemovalDeviceDuplicateSafety) {
+    ParticleStorage storage(q);
+    SpeciesID species = static_cast<SpeciesID>(1); // Adjust according to your Species enum values
 
-//     // 1. Allocate space for initial particles to populate a chunk
-//     size_t initial_particles_count = 10;
-//     auto segments = storage.allocate_space(species, initial_particles_count);
-//     ASSERT_FALSE(segments.empty());
+    // 1. Allocate space for initial particles to populate a chunk
+    size_t initial_particles_count = 10;
+    auto segments = storage.allocate_space(species, initial_particles_count);
+    ASSERT_FALSE(segments.empty());
 
-//     // Retrieve chunk views to access device-side methods and buffers
-//     auto views = storage.get_views(species);
-//     ASSERT_FALSE(views.empty());
-//     auto &chunk_view = views[0];
+    // Retrieve chunk views to access device-side methods and buffers
+    auto views = storage.get_views(species);
+    ASSERT_FALSE(views.empty());
+    auto &chunk_view = views[0];
 
-//     // Ensure dead count starts at zero
-//     q.memset(chunk_view.d_dead_count, 0, sizeof(int32_t)).wait();
+    // Ensure dead count starts at zero
+    q.memset(chunk_view.d_dead_count, 0, sizeof(int32_t)).wait();
 
-//     // 2. Submit a SYCL kernel simulating a physics/collision pass 
-//     // where particle index 3 is marked 3 times, and particle index 7 is marked 2 times.
-//     q.submit([&](sycl::handler &cgh) {
-//         cgh.parallel_for(sycl::range<1>(5), [=](sycl::id<1> idx) {
-//             size_t i = idx[0];
-//             if (i < 3) {
-//                 chunk_view.mark_for_removal_device(3); // Mark particle 3 three times
-//             } else {
-//                 chunk_view.mark_for_removal_device(7); // Mark particle 7 two times
-//             }
-//         });
-//     }).wait();
+    // 2. Submit a SYCL kernel simulating a physics/collision pass 
+    // where particle index 3 is marked 3 times, and particle index 7 is marked 2 times.
+    q.submit([&](sycl::handler &cgh) {
+        cgh.parallel_for(sycl::range<1>(5), [=](sycl::id<1> idx) {
+            size_t i = idx[0];
+            if (i < 3) {
+                chunk_view.mark_for_removal_device(3); // Mark particle 3 three times
+            } else {
+                chunk_view.mark_for_removal_device(7); // Mark particle 7 two times
+            }
+        });
+    }).wait();
 
-//     size_t count_before_compaction = storage.get_total_count(species); // Should be 10
+    size_t count_before_compaction = storage.get_total_count(species); // Should be 10
 
-//     // 3. Trigger compaction and particle removal via the storage API
-//     storage.free_marked_particles(species);
+    // 3. Trigger compaction and particle removal via the storage API
+    storage.free_marked_particles(species);
 
-//     // 4. Verification:
-//     // Even though mark_for_removal_device was called 5 times total, only 2 unique 
-//     // particles (3 and 7) were targeted. The total count should drop by exactly 2 (from 10 to 8).
-//     EXPECT_EQ(storage.get_total_count(species), count_before_compaction - 2);
+    // 4. Verification:
+    // Even though mark_for_removal_device was called 5 times total, only 2 unique 
+    // particles (3 and 7) were targeted. The total count should drop by exactly 2 (from 10 to 8).
+    EXPECT_EQ(storage.get_total_count(species), count_before_compaction - 2);
 
-//     // Verify that the internal device dead count was properly reset to 0 after compaction
-//     int32_t final_dead_count = -1;
-//     q.memcpy(&final_dead_count, chunk_view.d_dead_count, sizeof(int32_t)).wait();
-//     EXPECT_EQ(final_dead_count, 0);
-// }
+    // Verify that the internal device dead count was properly reset to 0 after compaction
+    int32_t final_dead_count = -1;
+    q.memcpy(&final_dead_count, chunk_view.d_dead_count, sizeof(int32_t)).wait();
+    EXPECT_EQ(final_dead_count, 0);
+}
+
+/**
+ * @brief Tests multi-marking (including duplicate attempts) and compaction via ParticleStorage.
+ */
+TEST_F(ParticleStorageTest, MultipleMarkingAndCompactionWithDuplicates) {
+    SpeciesID test_species = static_cast<SpeciesID>(0);
+    ParticleStorage storage(q);
+
+    // 1. Alokujemy np. 30 cząstek (załóżmy, że zmieszczą się w jednym lub wielu chunkach)
+    size_t count_to_add = 30;
+    auto handles = storage.allocate_space(test_species, count_to_add);
+    ASSERT_FALSE(handles.empty());
+
+    // Sprawdzamy czy początkowy licznik się zgadza
+    EXPECT_EQ(storage.get_total_count(test_species), count_to_add);
+
+    // 2. Pobieramy widoki chunków
+    auto views = storage.get_views(test_species);
+    ASSERT_FALSE(views.empty());
+
+    // Bierzemy pierwszy chunk do testu
+    ChunkSoAView view = views[0];
+
+    // 3. Oznaczamy wybrane cząstki do usunięcia, w tym wielokrotnie te same (duplikaty)
+    // Przykładowo oznaczamy indeksy: 3, 10, 15
+    // Indeks 3 oznaczymy 3 razy, indeks 10 oznaczymy 2 razy. Unikalnych do usunięcia będzie 3.
+    ASSERT_NO_THROW({
+        view.mark_for_removal(q, 3).wait();
+        view.mark_for_removal(q, 3).wait(); // Duplikat
+        view.mark_for_removal(q, 3).wait(); // Duplikat
+
+        view.mark_for_removal(q, 10).wait();
+        view.mark_for_removal(q, 10).wait(); // Duplikat
+
+        view.mark_for_removal(q, 15).wait();
+    });
+
+    // 4. Wywołujemy usuwanie i kompaktowanie dla danej species
+    storage.free_marked_particles(test_species);
+
+    // 5. Weryfikacja wyniku
+    // Początkowo było 30 cząstek. Oznaczyliśmy 3 unikalne (3, 10, 15).
+    // Oczekiwana liczba cząstek po kompaktowaniu to 30 - 3 = 27.
+    size_t expected_count = count_to_add - 3;
+    EXPECT_EQ(storage.get_total_count(test_species), expected_count);
+}
+
+/**
+ * @test VerifyMultipleMarkingAndCompactionWithDataIntegrity
+ * @brief Verifies that marking particles multiple times (including duplicates) and removing them 
+ *        correctly compacts the storage while preserving expected 6D values for remaining particles.
+ *
+ * Test workflow:
+ * 1. Allocates 10 particles in a single chunk.
+ * 2. Initializes each particle `i` with values based on base `i + 1.0f` (e.g., particle 0: {1.0, 1.1...}, particle 9: {10.0, 10.1...}).
+ * 3. Marks particles 3 and 5 for removal **multiple times** (simulating duplicate/redundant marking requests).
+ * 4. Triggers `storage.free_marked_particles()`.
+ * 5. Verifies that:
+ *    - Total count drops from 10 to 8.
+ *    - Duplicate markings did not cause issues or double-removals.
+ *    - Remaining particles are correctly compacted via Swap-and-Pop (last particles moved into the holes).
+ */
+TEST_F(ParticleStorageTest, VerifyMultipleMarkingAndCompactionWithDataIntegrity)
+{
+    ParticleStorage storage(q);
+    SpeciesID species = static_cast<SpeciesID>(0);
+
+    // 1. Alokujemy 10 cząstek w jednym chunku
+    size_t num_particles = 10;
+    storage.allocate_space(species, num_particles);
+
+    auto views = storage.get_views(species);
+    ASSERT_EQ(views.size(), 1u);
+    auto &view = views.front();
+    ASSERT_EQ(view.count, num_particles);
+
+    // 2. Inicjalizacja 10 cząstek unikalnymi wartościami bazowymi od 1.0f do 10.0f
+    // Cząstka i dostaje bazę: i + 1.0f (np. idx 0 -> 1.0, idx 3 -> 4.0, idx 9 -> 10.0)
+    q.submit([&](sycl::handler &cgh) {
+        auto posX = view.px; auto posY = view.py; auto posZ = view.pz;
+        auto velX = view.vx; auto velY = view.vy; auto velZ = view.vz;
+
+        cgh.parallel_for(sycl::range<1>(num_particles), [=](sycl::id<1> idx) {
+            float base = static_cast<float>(idx[0] + 1.0f);
+            posX[idx] = base + 0.0f;
+            posY[idx] = base + 0.1f;
+            posZ[idx] = base + 0.2f;
+            velX[idx] = base + 0.3f;
+            velY[idx] = base + 0.4f;
+            velZ[idx] = base + 0.5f;
+        });
+    }).wait();
+
+    // 3. Oznaczamy cząstki do usunięcia KILKUKROTNIE (duplikaty):
+    // - Cząstka o indeksie 3 (baza 4.0f) oznaczona 3 razy
+    // - Cząstka o indeksie 5 (baza 6.0f) oznaczona 2 razy
+    view.mark_for_removal(q, 3);
+    view.mark_for_removal(q, 3); // Duplikat
+    view.mark_for_removal(q, 3); // Duplikat
+
+    view.mark_for_removal(q, 5);
+    view.mark_for_removal(q, 5); // Duplikat
+    q.wait();
+
+    // 4. Wywołujemy kompaktowanie i usunięcie oznaczonych cząstek
+    storage.free_marked_particles();
+
+    // 5. Weryfikacja liczności po usunięciu (10 - 2 unikalne = 8 cząstek)
+    EXPECT_EQ(storage.get_total_count(species), 8u);
+    auto updated_views = storage.get_views(species);
+    ASSERT_EQ(updated_views.size(), 1u);
+    EXPECT_EQ(updated_views.front().count, 8u);
+
+    // Pobieramy stan 8 pozostałych cząstek z GPU na Host
+    std::vector<float> h_px(8), h_py(8), h_pz(8);
+    std::vector<float> h_vx(8), h_vy(8), h_vz(8);
+
+    q.memcpy(h_px.data(), updated_views.front().px, 8 * sizeof(float));
+    q.memcpy(h_py.data(), updated_views.front().py, 8 * sizeof(float));
+    q.memcpy(h_pz.data(), updated_views.front().pz, 8 * sizeof(float));
+    q.memcpy(h_vx.data(), updated_views.front().vx, 8 * sizeof(float));
+    q.memcpy(h_vy.data(), updated_views.front().vy, 8 * sizeof(float));
+    q.memcpy(h_vz.data(), updated_views.front().vz, 8 * sizeof(float)).wait();
+
+    // Pomocnicza lambda do weryfikacji wartości cząstki o danej bazie
+    auto verify_particle = [&](size_t host_idx, float expected_base) {
+        EXPECT_FLOAT_EQ(h_px[host_idx], expected_base + 0.0f);
+        EXPECT_FLOAT_EQ(h_py[host_idx], expected_base + 0.1f);
+        EXPECT_FLOAT_EQ(h_pz[host_idx], expected_base + 0.2f);
+        EXPECT_FLOAT_EQ(h_vx[host_idx], expected_base + 0.3f);
+        EXPECT_FLOAT_EQ(h_vy[host_idx], expected_base + 0.4f);
+        EXPECT_FLOAT_EQ(h_vz[host_idx], expected_base + 0.5f);
+    };
+
+    // 6. Sprawdzenie poprawności układu po Swap-and-Pop:
+    // Oryginalnie miałyśmy indeksy 0..9. 
+    // Usunięto indeks 3 oraz indeks 5.
+    // Zgodnie z algorytmem Swap-and-Pop (biorącym cząstki z końca):
+    // - Dziura pod indeksem 3 została wypełniona ostatnią cząstką z indeksu 9 (baza 10.0f).
+    // - Dziura pod indeksem 5 została wypełniona przedostatnią cząstką z indeksu 8 (baza 9.0f).
+    // Ostatecznie aktywne cząstki powinny mieć bazy: 
+    // [0] -> 1.0f
+    // [1] -> 2.0f
+    // [2] -> 3.0f
+    // [3] -> 10.0f (przeniesiona z idx 9)
+    // [4] -> 5.0f
+    // [5] -> 9.0f  (przeniesiona z idx 8)
+    // [6] -> 7.0f
+    // [7] -> 8.0f
+
+    verify_particle(0, 1.0f);
+    verify_particle(1, 2.0f);
+    verify_particle(2, 3.0f);
+    verify_particle(3, 10.0f); // W miejsce usuniętej 3 wskoczyła dawna 9
+    verify_particle(4, 5.0f);
+    verify_particle(5, 9.0f);  // W miejsce usuniętej 5 wskoczyła dawna 8
+    verify_particle(6, 7.0f);
+    verify_particle(7, 8.0f);
+}
+
+/**
+ * @test VerifyCheckerboardRemovalPattern
+ * @brief Verifies alternating (checkerboard) particle removal pattern where every other particle is marked for removal.
+ *
+ * Test workflow:
+ * 1. Allocates 10 particles in a single chunk initialized with unique base values.
+ * 2. Marks alternating particles (indices 0, 2, 4, 6, 8) for removal.
+ * 3. Triggers free_marked_particles() and verifies compaction.
+ * 4. Verifies that count drops to 5 and the remaining surviving particles 
+ *    (corresponding to original odd indices 1, 3, 5, 7, 9) have their 6D values fully preserved.
+ */
+TEST_F(ParticleStorageTest, VerifyCheckerboardRemovalPattern)
+{
+    ParticleStorage storage(q);
+    SpeciesID species = static_cast<SpeciesID>(0);
+
+    size_t num_particles = 10;
+    storage.allocate_space(species, num_particles);
+
+    auto views = storage.get_views(species);
+    ASSERT_EQ(views.size(), 1u);
+    auto &view = views.front();
+    ASSERT_EQ(view.count, num_particles);
+
+    // 1. Inicjalizacja 10 cząstek unikalnymi wartościami bazowymi od 1.0f do 10.0f
+    // Cząstka i dostaje bazę: i + 1.0f (np. idx 0 -> 1.0, idx 1 -> 2.0, ..., idx 9 -> 10.0)
+    q.submit([&](sycl::handler &cgh) {
+        auto posX = view.px; auto posY = view.py; auto posZ = view.pz;
+        auto velX = view.vx; auto velY = view.vy; auto velZ = view.vz;
+
+        cgh.parallel_for(sycl::range<1>(num_particles), [=](sycl::id<1> idx) {
+            float base = static_cast<float>(idx[0] + 1.0f);
+            posX[idx] = base + 0.0f;
+            posY[idx] = base + 0.1f;
+            posZ[idx] = base + 0.2f;
+            velX[idx] = base + 0.3f;
+            velY[idx] = base + 0.4f;
+            velZ[idx] = base + 0.5f;
+        });
+    }).wait();
+
+    // 2. Oznaczamy co drugą cząstkę do usunięcia (szachownica: indeksy 0, 2, 4, 6, 8)
+    for (size_t i = 0; i < num_particles; i += 2) {
+        view.mark_for_removal(q, i);
+    }
+    q.wait();
+
+    // 3. Wywołujemy kompaktowanie i usunięcie oznaczonych cząstek
+    storage.free_marked_particles();
+
+    // 4. Weryfikacja liczności po usunięciu (z 10 zostaje dokładnie 5 cząstek)
+    size_t expected_count = num_particles / 2;
+    EXPECT_EQ(storage.get_total_count(species), expected_count);
+
+    auto updated_views = storage.get_views(species);
+    ASSERT_EQ(updated_views.size(), 1u);
+    EXPECT_EQ(updated_views.front().count, expected_count);
+
+    // Pobieramy stan 5 pozostałych cząstek z GPU na Host
+    std::vector<float> h_px(expected_count), h_py(expected_count), h_pz(expected_count);
+    std::vector<float> h_vx(expected_count), h_vy(expected_count), h_vz(expected_count);
+
+    q.memcpy(h_px.data(), updated_views.front().px, expected_count * sizeof(float));
+    q.memcpy(h_py.data(), updated_views.front().py, expected_count * sizeof(float));
+    q.memcpy(h_pz.data(), updated_views.front().pz, expected_count * sizeof(float));
+    q.memcpy(h_vx.data(), updated_views.front().vx, expected_count * sizeof(float));
+    q.memcpy(h_vy.data(), updated_views.front().vy, expected_count * sizeof(float));
+    q.memcpy(h_vz.data(), updated_views.front().vz, expected_count * sizeof(float)).wait();
+
+    // 5. Weryfikacja zawartości pozostałych cząstek.
+    // Usunęliśmy indeksy parzyste: 0, 2, 4, 6, 8 (bazy: 1.0, 3.0, 5.0, 7.0, 9.0).
+    // Zostają indeksy nieparzyste: 1, 3, 5, 7, 9 (oczekiwane bazy: 2.0, 4.0, 6.0, 8.0, 10.0).
+    std::vector<float> expected_bases = {2.0f, 4.0f, 6.0f, 8.0f, 10.0f};
+    std::vector<float> actual_bases(expected_count);
+    
+    for (size_t i = 0; i < expected_count; ++i) {
+        // Ponieważ posX[idx] = base + 0.0f, to odczytana wartość to bezpośrednio base
+        actual_bases[i] = h_px[i]; 
+        
+        // Weryfikacja integralności 6D dla każdego komponentu
+        EXPECT_FLOAT_EQ(h_py[i], actual_bases[i] + 0.1f);
+        EXPECT_FLOAT_EQ(h_pz[i], actual_bases[i] + 0.2f);
+        EXPECT_FLOAT_EQ(h_vx[i], actual_bases[i] + 0.3f);
+        EXPECT_FLOAT_EQ(h_vy[i], actual_bases[i] + 0.4f);
+        EXPECT_FLOAT_EQ(h_vz[i], actual_bases[i] + 0.5f);
+    }
+
+    // Sortujemy oba wektory, ponieważ Swap-and-Pop zmienia kolejność w pamięci
+    std::sort(actual_bases.begin(), actual_bases.end());
+    std::sort(expected_bases.begin(), expected_bases.end());
+
+    ASSERT_EQ(actual_bases.size(), expected_bases.size());
+    for (size_t i = 0; i < expected_count; ++i) {
+        EXPECT_FLOAT_EQ(actual_bases[i], expected_bases[i]);
+    }
+}

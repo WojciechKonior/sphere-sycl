@@ -12,15 +12,34 @@ struct ChunkSoAView {
     size_t capacity;
     int32_t* d_dead_indices;
     int32_t* d_dead_count;
-    int8_t* d_is_dead;
+    uint32_t* d_is_dead;
 
     /// @brief Device method that submits a single-task in SYCL kernel to safely mark particle on GPU.
     inline void mark_for_removal_device(size_t local_idx) const {
-        if (d_dead_count == nullptr || d_dead_indices == nullptr || local_idx >= count) {
+        if (d_dead_count == nullptr || d_dead_indices == nullptr || d_is_dead == nullptr || local_idx >= count) {
             return;
         }
 
-        // 2. Atomowe przydzielenie slotu
+        // 1. Obliczamy indeks słowa (uint32_t) oraz konkretny bit dla danej cząstki
+        size_t word_idx = local_idx / 32;
+        uint32_t bit_mask = 1u << (local_idx % 32);
+
+        // 2. Atomowa operacja bitowa OR na słowie (zwraca poprzednią wartość słowa)
+        auto atomic_word = sycl::atomic_ref<
+            uint32_t, 
+            sycl::memory_order::relaxed, 
+            sycl::memory_scope::device, 
+            sycl::access::address_space::global_space
+        >(d_is_dead[word_idx]);
+
+        uint32_t old_word = atomic_word.fetch_or(bit_mask);
+
+        // 3. Sprawdzamy, czy dany bit był już ustawiony (duplikat)
+        if ((old_word & bit_mask) != 0) {
+            return; // Cząstka była już oznaczona – przerywamy, brak duplikatu w indices!
+        }
+
+        // 4. Pierwsze oznaczenie – bezpiecznie dodajemy indeks do d_dead_indices
         auto atomic_dead_count = sycl::atomic_ref<
             int32_t, 
             sycl::memory_order::relaxed, 
@@ -30,36 +49,40 @@ struct ChunkSoAView {
 
         int32_t slot = atomic_dead_count.fetch_add(1);
 
-        // 3. Zapis indeksu z ochroną przed OOB Write
+        // 5. Zapis indeksu z ochroną przed OOB Write
         if (slot < static_cast<int32_t>(capacity)) {
             d_dead_indices[slot] = static_cast<int32_t>(local_idx);
-        }
+        }   
+
+        // // 1. Atomowa próba zmiany stanu d_is_dead z 0 na 1 (atomic exchange)
+        // auto atomic_is_dead = sycl::atomic_ref<
+        //     uint32_t, 
+        //     sycl::memory_order::relaxed, 
+        //     sycl::memory_scope::device, 
+        //     sycl::access::address_space::global_space
+        // >(d_is_dead[local_idx]);
+
+        // // exchange zwraca poprzednią wartość. Jeśli była różna od 0, cząstka była już oznaczona.
+        // int8_t old_val = atomic_is_dead.exchange(1);
+        // if (old_val != 0) {
+        //     return; // Duplikat wykryty – pomijamy ponowne dodanie do d_dead_indices
+        // }
+
+        // // 2. Atomowe przydzielenie slotu w d_dead_indices tylko dla pierwszej próby usunięcia
+        // auto atomic_dead_count = sycl::atomic_ref<
+        //     int32_t, 
+        //     sycl::memory_order::relaxed, 
+        //     sycl::memory_scope::device, 
+        //     sycl::access::address_space::global_space
+        // >(*d_dead_count);
+
+        // int32_t slot = atomic_dead_count.fetch_add(1);
+
+        // // 3. Zapis indeksu z ochroną przed OOB Write
+        // if (slot < static_cast<int32_t>(capacity)) {
+        //     d_dead_indices[slot] = static_cast<int32_t>(local_idx);
+        // }
     }
-
-// void ParticleStorage::make_is_dead_array(Chunk& chunk, uint8_t* d_is_dead) {
-//     int32_t dead_count = 0;
-//     q_.memcpy(&dead_count, chunk.d_dead_count_, sizeof(int32_t)).wait();
-
-//     if (dead_count <= 0) return;
-
-//     size_t capacity = chunk.capacity();
-//     dead_count = std::min(dead_count, static_cast<int32_t>(chunk.count()));
-
-//     // 1. Zerujemy maskę d_is_dead dla całego pojemnika
-//     q_.memset(d_is_dead, 0, capacity * sizeof(uint8_t));
-
-//     // 2. Wpisujemy 1 pod indeksy martwych cząstek (wielokrotny zapis tego samego indeksu = 1)
-//     q_.submit([&](sycl::handler& cgh) {
-//         auto* dead_indices = chunk.d_dead_indices_;
-
-//         cgh.parallel_for(sycl::range<1>(dead_count), [=](sycl::id<1> idx) {
-//             int32_t p_idx = dead_indices[idx];
-//             if (p_idx >= 0 && static_cast<size_t>(p_idx) < capacity) {
-//                 d_is_dead[p_idx] = 1;
-//             }
-//         });
-//     }).wait();
-// }
 
     /// @brief Host wrapper method that submits a single-task SYCL kernel to safely mark particle on GPU.
     sycl::event mark_for_removal(sycl::queue &q, size_t local_idx) const {
@@ -91,6 +114,7 @@ private:
 
     int32_t *d_dead_indices_ = nullptr;
     int32_t *d_dead_count_ = nullptr;
+    uint32_t *d_is_dead_ = nullptr;
     
 public:
     Chunk(sycl::queue &q, size_t capacity = Constants::CHUNK_CAPACITY);

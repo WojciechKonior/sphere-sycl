@@ -1280,3 +1280,137 @@ TEST_F(ParticleStorageTest, VerifyCheckerboardRemovalPattern)
         EXPECT_FLOAT_EQ(actual_bases[i], expected_bases[i]);
     }
 }
+
+/**
+ * @test VerifyMultiChunkEmptyChunkDominoCompaction
+ * @brief Verifies multi-chunk compaction across chunks with empty intermediate chunks (Domino Effect).
+ *
+ * Test workflow:
+ * 1. Allocates space spanning 4 chunks (`3 * CHUNK_CAPACITY + 2`).
+ * 2. Sets up the requested state via removal markings:
+ *    - Chunk 0: Half full (half of its particles marked for removal).
+ *    - Chunk 1: Completely empty (all particles marked for removal).
+ *    - Chunk 2: Completely empty (all particles marked for removal).
+ *    - Chunk 3: Contains only 2 active particles.
+ * 3. Triggers free_marked_particles().
+ * 4. Verifies that multi-chunk compaction correctly skips empty intermediate chunks (count == 0),
+ *    migrates particles to fill gaps, and properly releases the emptied chunks from storage.
+ */
+TEST_F(ParticleStorageTest, VerifyMultiChunkEmptyChunkDominoCompaction)
+{
+    ParticleStorage storage(q);
+    SpeciesID species = static_cast<SpeciesID>(0);
+
+    const size_t cap = Constants::CHUNK_CAPACITY;
+    ASSERT_GE(cap, 100u); // Wymóg pojemności chunka dla testu
+
+    // 1. Alokujemy 4 chunki (3 pełne + 2 cząstki w 4. chunku)
+    size_t total_particles_to_add = 3 * cap + 2;
+    storage.allocate_space(species, total_particles_to_add);
+
+    auto views = storage.get_views(species);
+    ASSERT_EQ(views.size(), 4u);
+
+    // 2. Ustawiamy stan początkowy testu:
+    // - Chunk 0: W połowie pusty
+    // - Chunk 1 i Chunk 2: Mają być całkowicie puste.
+    // Ponieważ get_views() zwraca widoki, możemy oznaczyć wszystkie ich cząstki do usunięcia
+    // lub skorzystać z mechanizmu widoku. Aby nie robić wolnej pętli hosta na wielkim cap,
+    // wywołujemy szybki kernel oznaczający dla całego zakresu chunka:
+    size_t half_cap = cap / 2;
+    ChunkSoAView v0 = views[0], v1 = views[1], v2 = views[2];
+
+    q.submit([&](sycl::handler& cgh) {
+        cgh.parallel_for(sycl::range<1>(cap), [=](sycl::id<1> idx) {
+            if(idx[0]<half_cap)
+                v0.mark_for_removal_device(static_cast<int32_t>(idx[0]));
+            v1.mark_for_removal_device(static_cast<int32_t>(idx[0]));
+            v2.mark_for_removal_device(static_cast<int32_t>(idx[0]));
+        });
+    }).wait();
+
+    // 3. Wywołujemy globalne czyszczenie i kompaktowanie między-chunkowe
+    storage.free_marked_particles();
+
+    // 4. Weryfikacja stanu po kompaktowaniu domina:
+    // - Oczekiwana liczba żywych cząstek: to co zostało w chunku 0 (`cap - half_cap`) + 2 cząstki z chunka 3.
+    size_t expected_total_count = (cap - half_cap) + 2;
+    EXPECT_EQ(storage.get_total_count(species), expected_total_count);
+
+    // - Chunki 1 i 2 stały się całkowicie puste i zostały zwolnione z VRAMu przez mechanizm domina,
+    //   więc liczba aktywnych chunków musi spaść poniżej 4.
+    auto updated_views = storage.get_views(species);
+    EXPECT_GT(updated_views.size(), 0u);
+    EXPECT_LT(updated_views.size(), 4u); 
+}
+// TEST_F(ParticleStorageTest, VerifyMultiChunkEmptyChunkDominoCompaction)
+// {
+//     ParticleStorage storage(q);
+//     SpeciesID species = static_cast<SpeciesID>(0);
+
+//     const size_t cap = Constants::CHUNK_CAPACITY;
+//     ASSERT_GE(cap, 100u); // Wymóg pojemności chunka dla testu
+
+//     // 1. Alokujemy 4 chunki (3 pełne + 2 cząstki w 4. chunku)
+//     size_t total_particles_to_add = 3 * cap + 2;
+//     storage.allocate_space(species, total_particles_to_add);
+
+//     auto views = storage.get_views(species);
+//     ASSERT_EQ(views.size(), 4u);
+
+//     // 2. Ustawiamy stan początkowy testu:
+//     // - Chunk 0: W połowie pusty (oznaczamy połowę cząstek do usunięcia)
+//     size_t half_cap = cap / 2;
+//     for (size_t i = 0; i < half_cap; ++i) {
+//         views[0].mark_for_removal(q, i);
+//     }
+
+//     // - Chunk 1: Całkowicie pusty (oznaczamy wszystkie cząstki do usunięcia)
+//     for (size_t i = 0; i < cap; ++i) {
+//         views[1].mark_for_removal(q, i);
+//     }
+
+//     // - Chunk 2: Całkowicie pusty (oznaczamy wszystkie cząstki do usunięcia)
+//     for (size_t i = 0; i < cap; ++i) {
+//         views[2].mark_for_removal(q, i);
+//     }
+//     // ChunkSoAView view0 = views[0], view1 = views[1], view2 = views[2];
+//     // q.submit([&](sycl::handler &cgh) {
+//     //     // - Chunk 0: W połowie pusty (oznaczamy połowę cząstek do usunięcia)
+//     //     cgh.parallel_for(sycl::range<1>(half_cap), [=](sycl::id<1> idx) {
+//     //         view0.mark_for_removal_device(idx[0]);
+//     //     });
+
+//     //     // - Chunk 1: Całkowicie pusty (oznaczamy wszystkie cząstki do usunięcia)
+//     //     cgh.parallel_for(sycl::range<1>(cap), [=](sycl::id<1> idx) {
+//     //         view1.mark_for_removal_device(idx[0]);
+//     //     });
+
+//     //     // - Chunk 2: Całkowicie pusty (oznaczamy wszystkie cząstki do usunięcia)
+//     //     cgh.parallel_for(sycl::range<1>(cap), [=](sycl::id<1> idx) {
+//     //         view2.mark_for_removal_device(idx[0]);
+//     //     });
+//     // }).wait();
+
+//     // - Chunk 3: Posiada tylko 2 cząstki (zgodnie z alokacją `total_particles_to_add`, 
+//     //   widok ma dokładnie `cap` pojemności, ale używa tylko 2 pierwszych elementów).
+//     //   Oznaczamy pozostałe elementy w chunku 3 jako nieaktywne/do usunięcia lub po prostu 
+//     //   dbamy o to, by aktywne były tylko 2 pierwsze.
+//     //   (W widoku chunk 3 ma count = 2, więc fizycznie aktywne są tylko indeksy 0 i 1).
+
+//     q.wait();
+
+//     // 3. Wywołujemy globalne czyszczenie i kompaktowanie między-chunkowe
+//     storage.free_marked_particles();
+
+//     // 4. Weryfikacja stanu po kompaktowaniu domina:
+//     // - Oczekiwana liczba żywych cząstek: to co zostało w chunku 0 (`cap - half_cap`) + 2 cząstki z chunka 3.
+//     size_t expected_total_count = (cap - half_cap) + 2;
+//     EXPECT_EQ(storage.get_total_count(species), expected_total_count);
+
+//     // - Chunki 1 i 2 stały się całkowicie puste i zostały zwolnione z VRAMu, 
+//     //   więc liczba aktywnych chunków powinna drastycznie mniejsza (zostały co najwyżej 2 chunki).
+//     auto updated_views = storage.get_views(species);
+//     EXPECT_GT(updated_views.size(), 0u);
+//     EXPECT_LT(updated_views.size(), 4u); // Chunki 1 i 2 zostały usunięte naraz
+// }

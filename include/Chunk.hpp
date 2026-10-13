@@ -53,35 +53,6 @@ struct ChunkSoAView {
         if (slot < static_cast<int32_t>(capacity)) {
             d_dead_indices[slot] = static_cast<int32_t>(local_idx);
         }   
-
-        // // 1. Atomowa próba zmiany stanu d_is_dead z 0 na 1 (atomic exchange)
-        // auto atomic_is_dead = sycl::atomic_ref<
-        //     uint32_t, 
-        //     sycl::memory_order::relaxed, 
-        //     sycl::memory_scope::device, 
-        //     sycl::access::address_space::global_space
-        // >(d_is_dead[local_idx]);
-
-        // // exchange zwraca poprzednią wartość. Jeśli była różna od 0, cząstka była już oznaczona.
-        // int8_t old_val = atomic_is_dead.exchange(1);
-        // if (old_val != 0) {
-        //     return; // Duplikat wykryty – pomijamy ponowne dodanie do d_dead_indices
-        // }
-
-        // // 2. Atomowe przydzielenie slotu w d_dead_indices tylko dla pierwszej próby usunięcia
-        // auto atomic_dead_count = sycl::atomic_ref<
-        //     int32_t, 
-        //     sycl::memory_order::relaxed, 
-        //     sycl::memory_scope::device, 
-        //     sycl::access::address_space::global_space
-        // >(*d_dead_count);
-
-        // int32_t slot = atomic_dead_count.fetch_add(1);
-
-        // // 3. Zapis indeksu z ochroną przed OOB Write
-        // if (slot < static_cast<int32_t>(capacity)) {
-        //     d_dead_indices[slot] = static_cast<int32_t>(local_idx);
-        // }
     }
 
     /// @brief Host wrapper method that submits a single-task SYCL kernel to safely mark particle on GPU.

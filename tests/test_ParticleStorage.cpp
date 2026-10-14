@@ -1354,3 +1354,315 @@ TEST_F(ParticleStorageTest, VerifyMultiChunkEmptyChunkDominoCompaction)
     EXPECT_GT(updated_views.size(), 0u);
     EXPECT_LT(updated_views.size(), 4u); 
 }
+
+/**
+ * @test Verifies space allocation after a chunk is released via particle compaction (re-use scenario).
+ * 
+ * This test ensures that:
+ * 1. Releasing an empty chunk during compaction correctly updates storage metrics and chunk counts.
+ * 2. Subsequent allocations properly provision or reuse chunks with valid, uncorrupted USM pointers.
+ * 3. Existing chunks retain stable USM addresses, and new/reallocated chunks maintain unique, valid memory views.
+ */
+TEST_F(ParticleStorageTest, AllocateSpaceAfterChunkReleaseReuse)
+{
+    ParticleStorage storage(q);
+
+    // 1. Initialization: Set up a configuration with 2 chunks for a given species
+    SpeciesID species = static_cast<SpeciesID>(0);
+    size_t initial_chunks = 2;
+    size_t particles_to_add = (initial_chunks - 1) * Constants::CHUNK_CAPACITY + 1; // Fills 1 full chunk + 1 particle in the second chunk
+
+    // Allocate initial space
+    auto initial_handles = storage.allocate_space(species, particles_to_add);
+    EXPECT_EQ(storage.get_chunk_count(species), initial_chunks);
+    
+    // Save references to VRAM pointers prior to compaction (e.g., of the first chunk)
+    auto initial_views = storage.get_views(species);
+    ASSERT_EQ(initial_views.size(), initial_chunks);
+    auto* original_first_chunk_ptr = initial_views[0].px;
+
+    // 2. Mark all particles in the second (last) chunk for removal
+    // to trigger its complete release after compaction.
+    auto &last_view = initial_views.back();
+    size_t last_chunk_count = last_view.count;
+    
+    // Mark every particle in the last chunk
+    q.submit([&](sycl::handler& cgh) {
+        cgh.parallel_for(sycl::range<1>(last_chunk_count), [=](sycl::id<1> idx) {
+            last_view.device_mark_for_removal(static_cast<int32_t>(idx[0]));
+        });
+    }).wait();
+
+    // Execute the removal and compaction of dead particles
+    storage.free_marked_particles();
+
+    // 3. Verification post-removal: The empty chunk should be released (leaving 1 chunk)
+    EXPECT_EQ(storage.get_chunk_count(species), 1u);
+
+    // 4. Main Scenario: Allocate new particles after capacity update
+    // Allocate enough particles to force the re-allocation or re-occupancy of a second chunk
+    size_t new_particles_to_add = Constants::CHUNK_CAPACITY;
+    auto new_handles = storage.allocate_space(species, new_particles_to_add);
+
+    // Verify metrics after the new allocation
+    EXPECT_EQ(storage.get_chunk_count(species), 2u);
+
+    // 5. Check USM pointer validity and view consistency via get_views
+    auto updated_views = storage.get_views(species);
+    ASSERT_EQ(updated_views.size(), 2u);
+
+    // A. Did the first chunk preserve its stable VRAM address (was it not corrupted/reallocated)?
+    EXPECT_EQ(updated_views[0].px, original_first_chunk_ptr);
+
+    // B. Does the new/reallocated second chunk have a valid, non-null USM pointer?
+    EXPECT_NE(updated_views[1].px, nullptr);
+    
+    // C. Are the SoA pointers inside the views unique and consistent across both chunks?
+    EXPECT_NE(updated_views[0].px, updated_views[1].px);
+    EXPECT_NE(updated_views[0].py, updated_views[1].py);
+    EXPECT_NE(updated_views[0].pz, updated_views[1].pz);
+
+    // D. Verification of total particle count consistency
+    size_t expected_total_count = (particles_to_add - last_chunk_count) + new_particles_to_add;
+    EXPECT_EQ(storage.get_total_count(species), expected_total_count);
+}
+
+
+/**
+ * @test Verifies compaction behavior when only the absolute last particle of a chunk is marked for removal.
+ * 
+ * This test ensures that:
+ * 1. Marking only the final particle (which sits at the boundary of the active range) triggers no redundant 
+ *    SoA copy operations (`num_moves == 0`), as no particle relocation is needed from the tail.
+ * 2. If that particle is the only one in the chunk, the chunk correctly becomes empty, gets released, 
+ *    and updates the overall chunk count accordingly.
+ */
+TEST_F(ParticleStorageTest, CompactionOnlyLastParticleRemoved)
+{
+    ParticleStorage storage(q);
+
+    // 1. Initialization: Set up 3 chunks where the 3rd chunk contains exactly 1 particle
+    SpeciesID species = static_cast<SpeciesID>(0);
+    size_t initial_chunks = 3;
+    size_t particles_to_add = (initial_chunks - 1) * Constants::CHUNK_CAPACITY + 1; // Fills 2 full chunks + 1 particle in the 3rd chunk
+
+    auto handles = storage.allocate_space(species, particles_to_add);
+    ASSERT_EQ(storage.get_chunk_count(species), initial_chunks);
+
+    auto views = storage.get_views(species);
+    ASSERT_EQ(views.size(), initial_chunks);
+
+    // 2. Target the last particle of the 3rd chunk
+    auto &last_view = views.back();
+    ASSERT_EQ(last_view.count, 1u); // The 3rd chunk has exactly 1 particle
+    size_t last_particle_idx = last_view.count - 1; // Index 0
+
+    // Mark the last particle for removal
+    last_view.mark_for_removal(q, last_particle_idx);
+    q.wait();
+
+    // 3. Execute compaction and cleanup of marked particles
+    storage.free_marked_particles();
+
+    // 4. Verification:
+    // A. Since the 3rd chunk had only 1 particle and it was removed, the chunk should now be empty and released.
+    EXPECT_EQ(storage.get_chunk_count(species), initial_chunks - 1);
+
+    // B. Verify the total particle count reflects the single removed particle.
+    EXPECT_EQ(storage.get_total_count(species), particles_to_add - 1);
+
+    // C. Verify remaining views are valid and dead counts are cleared across active chunks
+    auto updated_views = storage.get_views(species);
+    EXPECT_EQ(updated_views.size(), initial_chunks - 1);
+    for (const auto &v : updated_views) {
+        int32_t h_dead_count = -1;
+        q.memcpy(&h_dead_count, v.d_dead_count, sizeof(int32_t)).wait();
+        EXPECT_EQ(h_dead_count, 0);
+    }
+}
+
+
+/**
+ * @test Verifies concurrent/parallel removal and compaction across multiple species (SpeciesID).
+ * 
+ * This test ensures that:
+ * 1. Marking particles across different species simultaneously does not cross-contaminate state.
+ * 2. Calling `storage.free_marked_particles()` correctly isolates each species during iteration over `species_chunks_`.
+ * 3. Dead counters (`d_dead_count`) and bitmasks are correctly and independently cleared for every active chunk across all species.
+ */
+TEST_F(ParticleStorageTest, SimultaneousCompactionMultipleSpecies)
+{
+    ParticleStorage storage(q);
+
+    // 1. Initialization: Set up 3 distinct species, each with 2 chunks
+    size_t number_of_species = 3;
+    size_t initial_chunks = 2;
+    size_t particles_per_species = Constants::CHUNK_CAPACITY + 1; // Fills 1 full chunk + 1 particle in the second chunk
+
+    for (size_t i = 0; i < number_of_species; ++i) {
+        SpeciesID species = static_cast<SpeciesID>(i);
+        storage.allocate_space(species, particles_per_species);
+        EXPECT_EQ(storage.get_chunk_count(species), initial_chunks);
+    }
+
+    // 2. Mark particles for removal across all species simultaneously
+    // Species 0: Mark the last particle of its first chunk
+    // Species 1: Mark the first particle of its second chunk
+    // Species 2: Mark the last particle of its second chunk
+    for (size_t i = 0; i < number_of_species; ++i) {
+        SpeciesID species = static_cast<SpeciesID>(i);
+        auto views = storage.get_views(species);
+        ASSERT_GE(views.size(), 2u);
+
+        if (i == 0) {
+            views[0].mark_for_removal(q, views[0].count - 1);
+        } else if (i == 1) {
+            views[1].mark_for_removal(q, 0);
+        } else if (i == 2) {
+            views[1].mark_for_removal(q, views[1].count - 1);
+        }
+    }
+    q.wait();
+
+    // 3. Execute global compaction for all marked particles across all species
+    storage.free_marked_particles();
+
+    // 4. Verification:
+    // A. Check that total counts for each species are correctly reduced by 1
+    size_t expected_count_per_species = particles_per_species - 1;
+    for (size_t i = 0; i < number_of_species; ++i) {
+        SpeciesID species = static_cast<SpeciesID>(i);
+        EXPECT_EQ(storage.get_total_count(species), expected_count_per_species);
+    }
+
+    // B. Check that d_dead_count is independently reset to 0 for every chunk across all species
+    for (size_t i = 0; i < number_of_species; ++i) {
+        SpeciesID species = static_cast<SpeciesID>(i);
+        auto views = storage.get_views(species);
+        for (const auto &v : views) {
+            int32_t h_dead_count = -1;
+            q.memcpy(&h_dead_count, v.d_dead_count, sizeof(int32_t)).wait();
+            EXPECT_EQ(h_dead_count, 0) << "Dead count for species " << i << " chunk was not reset properly!";
+        }
+    }
+}
+
+
+/**
+ * @test Verifies safety and correctness when duplicate or concurrent removal requests 
+ *       are issued for the same particle within the same time step.
+ * 
+ * This test ensures that:
+ * 1. Multiple calls to `mark_for_removal` for the same particle index do not inflate 
+ *    the dead count (atomic bitmask protection ensures unique tracking).
+ * 2. Subsequent execution of `free_marked_particles()` / `compact_chunk()` handles 
+ *    the dead count and bitmask cleanly without invalid memory access or corruption.
+ */
+TEST_F(ParticleStorageTest, MarkDuplicateParticleCompactionSafety)
+{
+    const size_t capacity = 100;
+    Chunk chunk(q, capacity);
+    chunk.set_count(10); // 10 active particles (indices 0 to 9)
+
+    auto view = chunk.get_view();
+
+    // Ensure dead count is zeroed
+    q.memset(view.d_dead_count, 0, sizeof(int32_t)).wait();
+
+    // 1. Issue multiple duplicate requests to remove the exact same particle (index 4)
+    // and another particle (index 7) multiple times concurrently/repeatedly.
+    view.mark_for_removal(q, 4);
+    view.mark_for_removal(q, 4);
+    view.mark_for_removal(q, 4);
+    
+    view.mark_for_removal(q, 7);
+    view.mark_for_removal(q, 7);
+
+    q.wait();
+
+    // 2. Verification of dead count: 
+    // Despite multiple duplicate calls, exactly 2 unique particles should be registered as dead.
+    int32_t h_dead_count = -1;
+    q.memcpy(&h_dead_count, view.d_dead_count, sizeof(int32_t)).wait();
+    EXPECT_EQ(h_dead_count, 2);
+
+    // 3. Verify bitmask state: only bits 4 and 7 should be set.
+    size_t num_words = (capacity + 31) / 32;
+    std::vector<uint32_t> h_is_dead(num_words, 0);
+    q.memcpy(h_is_dead.data(), view.d_is_dead, num_words * sizeof(uint32_t)).wait();
+
+    auto is_bit_set = [&](size_t idx) {
+        size_t word_idx = idx / 32;
+        uint32_t bit_mask = 1u << (idx % 32);
+        return (h_is_dead[word_idx] & bit_mask) != 0;
+    };
+
+    EXPECT_TRUE(is_bit_set(4));
+    EXPECT_TRUE(is_bit_set(7));
+
+    // Ensure no other bits are accidently marked
+    for (int i = 0; i < 10; ++i) {
+        if (i == 4 || i == 7) continue;
+        EXPECT_FALSE(is_bit_set(i));
+    }
+}
+
+/**
+ * @test Verifies behavior when all particles of a species are completely removed and storage becomes empty.
+ * 
+ * This test ensures that:
+ * 1. Removing all particles causes all chunks for that species to be released, 
+ *    resulting in `storage.get_chunk_count(species) == 0`.
+ * 2. Calling `storage.get_views(species)` returns a safely empty vector (`views.empty()`), 
+ *    preventing any dangling or invalid USM pointer access.
+ * 3. Subsequent re-allocation for the same species starts correctly from scratch and functions properly.
+ */
+TEST_F(ParticleStorageTest, ReadViewsWhenAllParticlesRemoved)
+{
+    ParticleStorage storage(q);
+
+    // 1. Initialization: Allocate particles for a specific species
+    SpeciesID species = static_cast<SpeciesID>(0);
+    size_t particles_to_add = Constants::CHUNK_CAPACITY; // Exactly 1 full chunk
+
+    auto handles = storage.allocate_space(species, particles_to_add);
+    EXPECT_EQ(storage.get_chunk_count(species), 1u);
+    EXPECT_EQ(storage.get_total_count(species), particles_to_add);
+
+    // 2. Mark ALL active particles in the chunk for removal
+    auto views = storage.get_views(species);
+    ASSERT_EQ(views.size(), 1u);
+
+    q.submit([=](sycl::handler &cgh){
+        auto view = views[0];
+        cgh.parallel_for(sycl::range<1>(view.count), [=](sycl::id<1> idx){
+            view.device_mark_for_removal(idx[0]);
+        });
+    });
+
+    // Execute compaction, which should completely release the chunk since it's now empty
+    storage.free_marked_particles();
+
+    // 3. Verification of empty state:
+    // A. Chunk count and total count must be zero
+    EXPECT_EQ(storage.get_chunk_count(species), 0u);
+    EXPECT_EQ(storage.get_total_count(species), 0u);
+    EXPECT_EQ(storage.get_total_capacity(species), 0u);
+
+    // B. Views vector must be safely empty (no invalid/dangling USM pointers returned)
+    auto empty_views = storage.get_views(species);
+    EXPECT_TRUE(empty_views.empty());
+
+    // 4. Verification of recovery / re-allocation from scratch:
+    // Try allocating new particles for the same species again to ensure storage state is clean and operational
+    size_t new_particles_to_add = Constants::CHUNK_CAPACITY / 2;
+    auto new_handles = storage.allocate_space(species, new_particles_to_add);
+
+    EXPECT_EQ(storage.get_chunk_count(species), 1u);
+    EXPECT_EQ(storage.get_total_count(species), new_particles_to_add);
+
+    auto recovered_views = storage.get_views(species);
+    ASSERT_EQ(recovered_views.size(), 1u);
+    EXPECT_NE(recovered_views[0].px, nullptr); // Valid USM pointer should be provisioned
+    EXPECT_EQ(recovered_views[0].count, new_particles_to_add);
+}

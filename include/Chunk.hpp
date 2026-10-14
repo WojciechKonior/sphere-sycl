@@ -10,13 +10,20 @@ struct ChunkSoAView {
     float* vx; float* vy; float* vz;
     size_t count;
     size_t capacity;
-    int32_t* d_dead_indices;
     int32_t* d_dead_count;
     uint32_t* d_is_dead;
 
+    /// @return true if partcle is marked as dead (for removal), false otherwise
+    bool device_is_particle_dead(int32_t i) const
+    {
+        size_t word_idx = static_cast<size_t>(i) / 32;
+        uint32_t bit_mask = 1u << (static_cast<size_t>(i) % 32);
+        return (d_is_dead[word_idx] & bit_mask) != 0;
+    }
+
     /// @brief Device method that submits a single-task in SYCL kernel to safely mark particle on GPU.
-    inline void mark_for_removal_device(size_t local_idx) const {
-        if (d_dead_count == nullptr || d_dead_indices == nullptr || d_is_dead == nullptr || local_idx >= count) {
+    inline void device_mark_for_removal(size_t local_idx) const {
+        if (d_dead_count == nullptr || d_is_dead == nullptr || local_idx >= count) {
             return;
         }
 
@@ -48,16 +55,11 @@ struct ChunkSoAView {
         >(*d_dead_count);
 
         int32_t slot = atomic_dead_count.fetch_add(1);
-
-        // 5. Zapis indeksu z ochroną przed OOB Write
-        if (slot < static_cast<int32_t>(capacity)) {
-            d_dead_indices[slot] = static_cast<int32_t>(local_idx);
-        }   
     }
 
     /// @brief Host wrapper method that submits a single-task SYCL kernel to safely mark particle on GPU.
     sycl::event mark_for_removal(sycl::queue &q, size_t local_idx) const {
-        if (d_dead_count == nullptr || d_dead_indices == nullptr || local_idx >= count)
+        if (d_dead_count == nullptr || local_idx >= count)
             return sycl::event();
 
         auto view = *this;
@@ -65,7 +67,7 @@ struct ChunkSoAView {
         return q.submit([=](sycl::handler &cgh) {
             cgh.single_task([=]() {
                 // Wywołanie dedykowanej funkcji Device!
-                view.mark_for_removal_device(local_idx);
+                view.device_mark_for_removal(local_idx);
             });
         });
     }
@@ -83,7 +85,6 @@ private:
     float *d_posX_ = nullptr; float *d_posY_ = nullptr; float *d_posZ_ = nullptr;
     float *d_velX_ = nullptr; float *d_velY_ = nullptr; float *d_velZ_ = nullptr;
 
-    int32_t *d_dead_indices_ = nullptr;
     int32_t *d_dead_count_ = nullptr;
     uint32_t *d_is_dead_ = nullptr;
     

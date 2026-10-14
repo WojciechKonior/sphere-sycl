@@ -135,6 +135,7 @@ size_t ParticleStorage::get_chunk_count() const
 
 void ParticleStorage::compact_chunk(Chunk& chunk) {
     int32_t dead_count = 0;
+    auto chunk_view = chunk.get_view();
     q_.memcpy(&dead_count, chunk.d_dead_count_, sizeof(int32_t)).wait();
 
     if (dead_count <= 0) return;
@@ -153,16 +154,22 @@ void ParticleStorage::compact_chunk(Chunk& chunk) {
 
     // RÓWNOLEGŁY KERNEL: Każdy wątek obsługuje JEDNĄ martwą cząstkę!
     q_.submit([&](sycl::handler& cgh) {
-        auto* dead_indices = chunk.d_dead_indices_;
         auto* d_is_dead = chunk.d_is_dead_;
         size_t new_count = total_count - dead_count;
 
-        cgh.parallel_for(sycl::range<1>(dead_count), [=](sycl::id<1> idx) {
+        cgh.parallel_for(sycl::range<1>(total_count), [=](sycl::id<1> idx) {
             int32_t i = static_cast<int32_t>(idx[0]);
-            int32_t target_slot = dead_indices[i];
+
+            // Sprawdzamy bezpośrednio w bitmasce d_is_dead, czy cząstka o indeksie i jest martwa
+            bool is_dead = chunk_view.device_is_particle_dead(i);
+            if (!is_dead) { // Jeżeli cząstka żyje, nic nie robimy
+                return;
+            }
+
+            int32_t target_slot = i;
 
             // Jeśli target_slot jest poza aktualnym zakresem, pomijamy
-            if (target_slot < 0 || target_slot >= static_cast<int32_t>(new_count)) {
+            if (target_slot >= static_cast<int32_t>(new_count)) {
                 return;
             }
 
@@ -184,12 +191,8 @@ void ParticleStorage::compact_chunk(Chunk& chunk) {
                 }
 
                 // Sprawdzamy czy zaklepany kandydat jest żywy w O(1) przez bitmaskę
-                size_t word_idx = static_cast<size_t>(cand) / 32;
-                uint32_t bit_mask = 1u << (static_cast<size_t>(cand) % 32);
-                bool is_dead = (d_is_dead[word_idx] & bit_mask) != 0;
-
-                // Jeśli kandydat jest żywy, to jest nasze źródło! Zaklepane!
-                if (!is_dead) {
+                bool is_dead = chunk_view.device_is_particle_dead(cand);
+                if (!is_dead) { // Jeśli kandydat jest żywy, to jest nasze źródło! Zaklepane!
                     source_candidate = cand;
                     break;
                 }

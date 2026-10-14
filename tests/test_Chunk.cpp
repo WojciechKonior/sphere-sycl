@@ -260,7 +260,6 @@ TEST_F(ChunkTest, InitializationAllocatesBuffers) {
     ASSERT_NE(view.vx, nullptr);
     ASSERT_NE(view.vy, nullptr);
     ASSERT_NE(view.vz, nullptr);
-    ASSERT_NE(view.d_dead_indices, nullptr);
     ASSERT_NE(view.d_dead_count, nullptr);
 
     // Verify d_dead_count is initialized to zero on device USM
@@ -291,14 +290,26 @@ TEST_F(ChunkTest, MarkForRemovalInSYCLBuffer) {
     EXPECT_EQ(h_dead_count, 3);
 
     // 2. Read back indices from device USM and verify contents
-    std::vector<int32_t> h_dead_indices(3);
-    queue.memcpy(h_dead_indices.data(), view.d_dead_indices, 3 * sizeof(int32_t)).wait();
+    size_t num_word_bits = (capacity + 31) / 32;
+    std::vector<uint32_t> h_is_dead(num_word_bits, 0);
+    queue.memcpy(h_is_dead.data(), view.d_is_dead, num_word_bits * sizeof(uint32_t)).wait();
 
-    // Order of atomic inserts may vary on GPU, so sort before comparison
-    std::sort(h_dead_indices.begin(), h_dead_indices.end());
-    EXPECT_EQ(h_dead_indices[0], 2);
-    EXPECT_EQ(h_dead_indices[1], 5);
-    EXPECT_EQ(h_dead_indices[2], 8);
+    // 3. Verify bits for particles 2, 5, and 8 are set, and others are 0
+    auto is_bit_set = [&](size_t idx) {
+        size_t word_idx = idx / 32;
+        uint32_t bit_mask = 1u << (idx % 32);
+        return (h_is_dead[word_idx] & bit_mask) != 0;
+    };
+
+    EXPECT_TRUE(is_bit_set(2));
+    EXPECT_TRUE(is_bit_set(5));
+    EXPECT_TRUE(is_bit_set(8));
+
+    // Upewnijmy się, że inne cząstki w zakresie 0-9 (poza 2, 5, 8) nie zostały zaznaczone
+    for (int i = 0; i < 10; ++i) {
+        if (i == 2 || i == 5 || i == 8) continue;
+        EXPECT_FALSE(is_bit_set(i));
+    }
 }
 
 /**
@@ -330,10 +341,25 @@ TEST_F(ChunkTest, MarkNonExistentParticleSafety) {
     queue.memcpy(&h_dead_count, view.d_dead_count, sizeof(int32_t)).wait();
     EXPECT_EQ(h_dead_count, 1);
 
-    // 4. Odczytujemy indeks z bufora na GPU i sprawdzamy, czy to dokładnie indeks 2
-    int32_t h_dead_index = -1;
-    queue.memcpy(&h_dead_index, view.d_dead_indices, sizeof(int32_t)).wait();
-    EXPECT_EQ(h_dead_index, 2);
+    // 4. Odczytujemy bitmaskę z bufora na GPU i sprawdzamy, czy zaznaczony jest tylko indeks 2
+    size_t num_word_bits = (capacity + 31) / 32;
+    std::vector<uint32_t> h_is_dead(num_word_bits, 0);
+    queue.memcpy(h_is_dead.data(), view.d_is_dead, num_word_bits * sizeof(uint32_t)).wait();
+
+    auto is_bit_set = [&](size_t idx) {
+        size_t word_idx = idx / 32;
+        uint32_t bit_mask = 1u << (idx % 32);
+        return (h_is_dead[word_idx] & bit_mask) != 0;
+    };
+
+    // Sprawdzamy, czy indeks 2 jest zaznaczony, a próby oznaczania pozostałych (5, 10, 999) zostały bezpiecznie odrzucone
+    EXPECT_TRUE(is_bit_set(2));
+    EXPECT_FALSE(is_bit_set(5));
+    EXPECT_FALSE(is_bit_set(10));
+    // Dla indeksu 999 (poza capacity) sprawdzamy bezpiecznie, że nie wyszliśmy poza zakres wektora hosta
+    if (999 < capacity) {
+        EXPECT_FALSE(is_bit_set(999));
+    }
 }
 
 /**
@@ -466,7 +492,6 @@ TEST_F(ChunkTest, GetViewPointersMatch) {
     EXPECT_NE(view.vx, nullptr);
     EXPECT_NE(view.vy, nullptr);
     EXPECT_NE(view.vz, nullptr);
-    EXPECT_NE(view.d_dead_indices, nullptr);
     EXPECT_NE(view.d_dead_count, nullptr);
     EXPECT_NE(view.d_is_dead, nullptr);
 }
@@ -502,13 +527,25 @@ TEST_F(ChunkTest, MarkDuplicateParticleSafety) {
     queue.memcpy(&h_dead_count, view.d_dead_count, sizeof(int32_t)).wait();
     EXPECT_EQ(h_dead_count, 2);
 
-    // 3. Sprawdzamy zawartość bufora indeksów
-    std::vector<int32_t> h_dead_indices(2);
-    queue.memcpy(h_dead_indices.data(), view.d_dead_indices, 2 * sizeof(int32_t)).wait();
+    // 3. Odczytujemy bitmaskę z bufora na GPU i sprawdzamy, czy zaznaczone są dokładnie i wyłącznie cząstki 3 oraz 7
+    size_t num_word_bits = (capacity + 31) / 32;
+    std::vector<uint32_t> h_is_dead(num_word_bits, 0);
+    queue.memcpy(h_is_dead.data(), view.d_is_dead, num_word_bits * sizeof(uint32_t)).wait();
 
-    std::sort(h_dead_indices.begin(), h_dead_indices.end());
-    EXPECT_EQ(h_dead_indices[0], 3);
-    EXPECT_EQ(h_dead_indices[1], 7);
+    auto is_bit_set = [&](size_t idx) {
+        size_t word_idx = idx / 32;
+        uint32_t bit_mask = 1u << (idx % 32);
+        return (h_is_dead[word_idx] & bit_mask) != 0;
+    };
+
+    EXPECT_TRUE(is_bit_set(3));
+    EXPECT_TRUE(is_bit_set(7));
+
+    // Upewniamy się, że pozostałe cząstki z zakresu 0-9 nie zostały dotknięte
+    for (int i = 0; i < 10; ++i) {
+        if (i == 3 || i == 7) continue;
+        EXPECT_FALSE(is_bit_set(i));
+    }
 }
 
 /**
@@ -552,14 +589,4 @@ TEST_F(ChunkTest, MarkForRemovalBitmaskAndIndices) {
     
     // Weryfikacja, że inna cząstka (np. 3) NIE jest oznaczona
     EXPECT_FALSE((h_dead_bits[0] & (1u << 3)) != 0) << "Particle 3 bit should remain unset!";
-
-    // 5. Sprawdzamy tablicę indeksów (d_dead_indices) na hoście
-    std::vector<int32_t> h_dead_indices(h_dead_count, -1);
-    queue.memcpy(h_dead_indices.data(), view.d_dead_indices, h_dead_count * sizeof(int32_t)).wait();
-
-    // Indeksy powinny zawierać 2 i 5 (kolejność może zależeć od momentu wykonania, ale elementy muszą się zgadzać)
-    std::vector<int32_t> expected_indices = {2, 5};
-    std::sort(h_dead_indices.begin(), h_dead_indices.end());
-    
-    EXPECT_EQ(h_dead_indices, expected_indices);
 }

@@ -335,44 +335,57 @@ TEST_F(ParticleStorageTest, CompactionReleasesEmptyChunk)
     // Synchronizujemy operacje atomowe przed sprawdzeniem stanu
     q.wait();
 
+    // Pomocnicza lambda do sprawdzania stanu bitu w buforze bitmaski
+    auto is_bit_set = [](const std::vector<uint32_t>& h_is_dead, size_t idx) {
+        size_t word_idx = idx / 32;
+        uint32_t bit_mask = 1u << (idx % 32);
+        return (h_is_dead[word_idx] & bit_mask) != 0;
+    };
+
     // --- 3. WERYFIKACJA REJESTRACJI MARTWYCH CZĄSTEK W VRAM ---
 
     // Sprawdzenie SpeciesID = 0
     {
         int32_t dead_count = 0;
-        int32_t dead_idx = -1;
         q.memcpy(&dead_count, last_view_0.d_dead_count, sizeof(int32_t)).wait();
-        q.memcpy(&dead_idx, last_view_0.d_dead_indices, sizeof(int32_t)).wait();
-
         EXPECT_EQ(dead_count, 1);
-        EXPECT_EQ(dead_idx, static_cast<int32_t>(last_idx_0));
+
+        size_t num_words = (last_view_0.capacity + 31) / 32;
+        std::vector<uint32_t> h_is_dead(num_words, 0);
+        q.memcpy(h_is_dead.data(), last_view_0.d_is_dead, num_words * sizeof(uint32_t)).wait();
+
+        EXPECT_TRUE(is_bit_set(h_is_dead, last_idx_0));
     }
 
     // Sprawdzenie SpeciesID = 1
     {
         int32_t dead_count = 0;
-        std::vector<int32_t> dead_indices(2, -1);
         q.memcpy(&dead_count, first_view_1.d_dead_count, sizeof(int32_t)).wait();
-        q.memcpy(dead_indices.data(), first_view_1.d_dead_indices, 2 * sizeof(int32_t)).wait();
-
         EXPECT_EQ(dead_count, 2);
-        EXPECT_TRUE((dead_indices[0] == 0 && dead_indices[1] == 1) ||
-                    (dead_indices[0] == 1 && dead_indices[1] == 0));
+
+        size_t num_words = (first_view_1.capacity + 31) / 32;
+        std::vector<uint32_t> h_is_dead(num_words, 0);
+        q.memcpy(h_is_dead.data(), first_view_1.d_is_dead, num_words * sizeof(uint32_t)).wait();
+
+        EXPECT_TRUE(is_bit_set(h_is_dead, 0));
+        EXPECT_TRUE(is_bit_set(h_is_dead, 1));
     }
 
     // Sprawdzenie SpeciesID = 2
     {
         int32_t dead_count = 0;
-        std::vector<int32_t> dead_indices(2, -1);
         q.memcpy(&dead_count, second_view_2.d_dead_count, sizeof(int32_t)).wait();
-        q.memcpy(dead_indices.data(), second_view_2.d_dead_indices, 2 * sizeof(int32_t)).wait();
-
         EXPECT_EQ(dead_count, 2);
-        int32_t expected_first = static_cast<int32_t>(mid_idx_2);
-        int32_t expected_second = static_cast<int32_t>(mid_idx_2 + 1);
+
+        size_t num_words = (second_view_2.capacity + 31) / 32;
+        std::vector<uint32_t> h_is_dead(num_words, 0);
+        q.memcpy(h_is_dead.data(), second_view_2.d_is_dead, num_words * sizeof(uint32_t)).wait();
+
+        size_t expected_first = mid_idx_2;
+        size_t expected_second = mid_idx_2 + 1;
         
-        EXPECT_TRUE((dead_indices[0] == expected_first && dead_indices[1] == expected_second) ||
-                    (dead_indices[0] == expected_second && dead_indices[1] == expected_first));
+        EXPECT_TRUE(is_bit_set(h_is_dead, expected_first));
+        EXPECT_TRUE(is_bit_set(h_is_dead, expected_second));
     }
 
     storage.free_marked_particles();
@@ -942,10 +955,8 @@ TEST_F(ParticleStorageTest, VerifyMassRemovalWithinSingleChunk)
     // Wywołujemy pojedynczy wątek na GPU do oznaczenia indeksu 2
     q.submit([&](sycl::handler &cgh) {
         auto d_dead_count = chunk_1_view.d_dead_count;
-        auto d_dead_indices = chunk_1_view.d_dead_indices;
-
         cgh.parallel_for(sycl::range<1>(chunk_1_count), [=](sycl::id<1> idx) {
-            chunk_1_view.mark_for_removal_device(idx[0]);
+            chunk_1_view.device_mark_for_removal(idx[0]);
         });
     }).wait();
 
@@ -1002,9 +1013,9 @@ TEST_F(ParticleStorageTest, MarkForRemovalDeviceDuplicateSafety) {
         cgh.parallel_for(sycl::range<1>(5), [=](sycl::id<1> idx) {
             size_t i = idx[0];
             if (i < 3) {
-                chunk_view.mark_for_removal_device(3); // Mark particle 3 three times
+                chunk_view.device_mark_for_removal(3); // Mark particle 3 three times
             } else {
-                chunk_view.mark_for_removal_device(7); // Mark particle 7 two times
+                chunk_view.device_mark_for_removal(7); // Mark particle 7 two times
             }
         });
     }).wait();
@@ -1323,9 +1334,9 @@ TEST_F(ParticleStorageTest, VerifyMultiChunkEmptyChunkDominoCompaction)
     q.submit([&](sycl::handler& cgh) {
         cgh.parallel_for(sycl::range<1>(cap), [=](sycl::id<1> idx) {
             if(idx[0]<half_cap)
-                v0.mark_for_removal_device(static_cast<int32_t>(idx[0]));
-            v1.mark_for_removal_device(static_cast<int32_t>(idx[0]));
-            v2.mark_for_removal_device(static_cast<int32_t>(idx[0]));
+                v0.device_mark_for_removal(static_cast<int32_t>(idx[0]));
+            v1.device_mark_for_removal(static_cast<int32_t>(idx[0]));
+            v2.device_mark_for_removal(static_cast<int32_t>(idx[0]));
         });
     }).wait();
 
@@ -1343,74 +1354,3 @@ TEST_F(ParticleStorageTest, VerifyMultiChunkEmptyChunkDominoCompaction)
     EXPECT_GT(updated_views.size(), 0u);
     EXPECT_LT(updated_views.size(), 4u); 
 }
-// TEST_F(ParticleStorageTest, VerifyMultiChunkEmptyChunkDominoCompaction)
-// {
-//     ParticleStorage storage(q);
-//     SpeciesID species = static_cast<SpeciesID>(0);
-
-//     const size_t cap = Constants::CHUNK_CAPACITY;
-//     ASSERT_GE(cap, 100u); // Wymóg pojemności chunka dla testu
-
-//     // 1. Alokujemy 4 chunki (3 pełne + 2 cząstki w 4. chunku)
-//     size_t total_particles_to_add = 3 * cap + 2;
-//     storage.allocate_space(species, total_particles_to_add);
-
-//     auto views = storage.get_views(species);
-//     ASSERT_EQ(views.size(), 4u);
-
-//     // 2. Ustawiamy stan początkowy testu:
-//     // - Chunk 0: W połowie pusty (oznaczamy połowę cząstek do usunięcia)
-//     size_t half_cap = cap / 2;
-//     for (size_t i = 0; i < half_cap; ++i) {
-//         views[0].mark_for_removal(q, i);
-//     }
-
-//     // - Chunk 1: Całkowicie pusty (oznaczamy wszystkie cząstki do usunięcia)
-//     for (size_t i = 0; i < cap; ++i) {
-//         views[1].mark_for_removal(q, i);
-//     }
-
-//     // - Chunk 2: Całkowicie pusty (oznaczamy wszystkie cząstki do usunięcia)
-//     for (size_t i = 0; i < cap; ++i) {
-//         views[2].mark_for_removal(q, i);
-//     }
-//     // ChunkSoAView view0 = views[0], view1 = views[1], view2 = views[2];
-//     // q.submit([&](sycl::handler &cgh) {
-//     //     // - Chunk 0: W połowie pusty (oznaczamy połowę cząstek do usunięcia)
-//     //     cgh.parallel_for(sycl::range<1>(half_cap), [=](sycl::id<1> idx) {
-//     //         view0.mark_for_removal_device(idx[0]);
-//     //     });
-
-//     //     // - Chunk 1: Całkowicie pusty (oznaczamy wszystkie cząstki do usunięcia)
-//     //     cgh.parallel_for(sycl::range<1>(cap), [=](sycl::id<1> idx) {
-//     //         view1.mark_for_removal_device(idx[0]);
-//     //     });
-
-//     //     // - Chunk 2: Całkowicie pusty (oznaczamy wszystkie cząstki do usunięcia)
-//     //     cgh.parallel_for(sycl::range<1>(cap), [=](sycl::id<1> idx) {
-//     //         view2.mark_for_removal_device(idx[0]);
-//     //     });
-//     // }).wait();
-
-//     // - Chunk 3: Posiada tylko 2 cząstki (zgodnie z alokacją `total_particles_to_add`, 
-//     //   widok ma dokładnie `cap` pojemności, ale używa tylko 2 pierwszych elementów).
-//     //   Oznaczamy pozostałe elementy w chunku 3 jako nieaktywne/do usunięcia lub po prostu 
-//     //   dbamy o to, by aktywne były tylko 2 pierwsze.
-//     //   (W widoku chunk 3 ma count = 2, więc fizycznie aktywne są tylko indeksy 0 i 1).
-
-//     q.wait();
-
-//     // 3. Wywołujemy globalne czyszczenie i kompaktowanie między-chunkowe
-//     storage.free_marked_particles();
-
-//     // 4. Weryfikacja stanu po kompaktowaniu domina:
-//     // - Oczekiwana liczba żywych cząstek: to co zostało w chunku 0 (`cap - half_cap`) + 2 cząstki z chunka 3.
-//     size_t expected_total_count = (cap - half_cap) + 2;
-//     EXPECT_EQ(storage.get_total_count(species), expected_total_count);
-
-//     // - Chunki 1 i 2 stały się całkowicie puste i zostały zwolnione z VRAMu, 
-//     //   więc liczba aktywnych chunków powinna drastycznie mniejsza (zostały co najwyżej 2 chunki).
-//     auto updated_views = storage.get_views(species);
-//     EXPECT_GT(updated_views.size(), 0u);
-//     EXPECT_LT(updated_views.size(), 4u); // Chunki 1 i 2 zostały usunięte naraz
-// }

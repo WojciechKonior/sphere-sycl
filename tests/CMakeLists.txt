@@ -12,6 +12,7 @@ FetchContent_MakeAvailable(googletest)
 add_executable(picsim_tests 
     test_Chunk.cpp
     test_ParticleStorage.cpp
+    test_Species.cpp
 )
 
 # Wymuszenie flag SYCL dla celu testowego

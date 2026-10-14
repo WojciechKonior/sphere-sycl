@@ -7,18 +7,18 @@
 
 /// @brief Physical and simulation configuration constants.
 namespace Constants {
-    constexpr float MACROPARTICLE_WEIGHT = 1.0e8f;
+    constexpr float MACROPARTICLE_WEIGHT    = 1.0e8f;
 
-    constexpr float MASS_ELECTRON = 9.109e-31f;
-    constexpr float MASS_HYDROGEN_ION   = 1.672e-27f;
-    constexpr float MASS_HYDROGEN = 1.674e-27f;
+    constexpr float MASS_ELECTRON           = 9.109e-31f;
+    constexpr float MASS_HYDROGEN_ION       = 1.672e-27f;
+    constexpr float MASS_HYDROGEN           = 1.674e-27f;
 
-    constexpr float CHARGE_ELEMENTARY = 1.602e-19f;
-    constexpr float CHARGE_ELECTRON   = -CHARGE_ELEMENTARY;
+    constexpr float CHARGE_ELEMENTARY       = 1.602e-19f;
+    constexpr float CHARGE_ELECTRON         = -CHARGE_ELEMENTARY;
     constexpr float CHARGE_HYDROGEN_ION     =  CHARGE_ELEMENTARY;
-    constexpr float CHARGE_NEUTRAL    =  0.0f;
+    constexpr float CHARGE_NEUTRAL          =  0.0f;
 
-    constexpr size_t CHUNK_CAPACITY = 2000000; // 2e6
+    constexpr size_t CHUNK_CAPACITY         = 2000000; // 2e6 -> ((6*4 + 4/8)*2e6 + 8 + 8 + 4)B = 46,73MB per chunk
 }
 
 /// @brief Identifiers for physical particle species used in the simulation.
@@ -53,6 +53,9 @@ private:
     std::unordered_map<SpeciesID, SpeciesTraits> registry_;
 
 public:
+    /// @brief Constructor that automatically populates the registry with standard physical species.
+    SpeciesRegistry();
+
     /// @brief Registers a new species or updates an existing entry in the registry.
     void register_species(SpeciesID id, const std::string &name, float m, float q, float weight);
 

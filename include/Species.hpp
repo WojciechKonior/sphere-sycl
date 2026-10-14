@@ -54,7 +54,7 @@ private:
 
 public:
     /// @brief Constructor that automatically populates the registry with standard physical species.
-    SpeciesRegistry();
+    explicit SpeciesRegistry();
 
     /// @brief Registers a new species or updates an existing entry in the registry.
     void register_species(SpeciesID id, const std::string &name, float m, float q, float weight);

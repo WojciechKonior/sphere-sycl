@@ -1,4 +1,4 @@
-cmake_minimum_required(VERSION 3.20)
+cmake_minimum_required(VERSION 3.25)
 
 # Wymuszenie kompilatora icpx (przed project())
 set(CMAKE_CXX_COMPILER icpx)
@@ -6,12 +6,12 @@ set(CMAKE_CXX_COMPILER icpx)
 project(PicSimulation CXX)
 
 # Standard C++20
-set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
 # Flagi SYCL i optymalizacji dla Intel OneAPI
-add_compile_options(-fsycl -O3 -g3)
+add_compile_options(-fsycl -O3 -g3 -Werror)
 add_link_options(-fsycl)
 
 set(CMAKE_BUILD_TYPE Release)

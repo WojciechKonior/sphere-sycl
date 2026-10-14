@@ -24,8 +24,7 @@ std::vector<SegmentHandle> ParticleStorage::allocate_space(SpeciesID species, si
 
             handles.push_back({chunk->d_posX_, chunk->d_posY_, chunk->d_posZ_,
                                chunk->d_velX_, chunk->d_velY_, chunk->d_velZ_,
-                               chunk->count(), // offset wewnątrz chunka
-                               alloc_size});
+                               chunk->count(), alloc_size, chunk->d_dead_count_, chunk->d_is_dead_});
 
             chunk->set_count(chunk->count() + alloc_size);
             remaining -= alloc_size;
@@ -42,8 +41,7 @@ std::vector<SegmentHandle> ParticleStorage::allocate_space(SpeciesID species, si
 
         handles.push_back({new_chunk->d_posX_, new_chunk->d_posY_, new_chunk->d_posZ_,
                            new_chunk->d_velX_, new_chunk->d_velY_, new_chunk->d_velZ_,
-                           0, // nowy chunk zaczyna się od offsetu 0
-                           alloc_size});
+                           0, alloc_size, new_chunk->d_dead_count_, new_chunk->d_is_dead_});
 
         new_chunk->set_count(alloc_size);
         remaining -= alloc_size;

@@ -16,6 +16,8 @@ struct SegmentHandle {
     float* vx; float* vy; float* vz;
     size_t offset;
     size_t count;
+    int32_t* d_dead_count;
+    uint32_t* d_is_dead;
 };
 
 /// @brief Manages VRAM allocations, chunk lifecycles, and particle memory (SoA layout) per species.

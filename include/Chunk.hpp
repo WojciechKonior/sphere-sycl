@@ -89,7 +89,7 @@ private:
     uint32_t *d_is_dead_ = nullptr;
     
 public:
-    Chunk(sycl::queue &q, size_t capacity = Constants::CHUNK_CAPACITY);
+    explicit Chunk(sycl::queue &q, size_t capacity = Constants::CHUNK_CAPACITY);
     ~Chunk();
     Chunk(const Chunk &) = delete; // Prevent copying to ensure sole ownership of VRAM resource allocations
     Chunk &operator=(const Chunk &) = delete; // Prevent copying to ensure sole ownership of VRAM resource allocations

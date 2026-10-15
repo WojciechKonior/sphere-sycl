@@ -18,6 +18,9 @@ set(CMAKE_BUILD_TYPE Release)
 
 # 1. Deklaracja plików nagłówkowych (dla IDE)
 set(HEADERS
+    include/SimulationSteps/ParticleInjectorStrategy/BeamSourceStrategy.hpp
+    include/SimulationSteps/ParticleInjectorStrategy/IParticleInjectorStrategy.hpp
+    include/SimulationSteps/ParticleInjectorStrategy/PointSourceStrategy.hpp
     include/SimulationSteps/ChargeDepositionStep.hpp
     include/SimulationSteps/FieldSolverStep.hpp
     include/SimulationSteps/ISimulationStep.hpp

@@ -88,7 +88,7 @@ TEST_F(ParticleStorageTest, InitialStateIsEmpty) {
 TEST_F(ParticleStorageTest, AllocateZeroParticles) {
     ParticleStorage storage(q);
 
-    auto handles = storage.allocate_space(SpeciesID::ELECTRON, 0);
+    auto handles = storage.reserve_space(SpeciesID::ELECTRON, 0);
 
     EXPECT_TRUE(handles.empty());
     EXPECT_EQ(storage.get_total_count(SpeciesID::ELECTRON), 0);
@@ -102,7 +102,7 @@ TEST_F(ParticleStorageTest, AllocateSingleChunkPartial) {
     ParticleStorage storage(q);
     const size_t count = 500; // Assumes CHUNK_CAPACITY > 500
 
-    auto handles = storage.allocate_space(SpeciesID::ELECTRON, count);
+    auto handles = storage.reserve_space(SpeciesID::ELECTRON, count);
 
     // Should return a single segment handle in the newly allocated chunk
     ASSERT_EQ(handles.size(), 1);
@@ -124,11 +124,11 @@ TEST_F(ParticleStorageTest, AllocateAcrossMultipleChunks) {
 
     // Step 1: Fill half of the first chunk
     const size_t first_alloc = capacity / 2;
-    storage.allocate_space(SpeciesID::HYDROGEN_ION, first_alloc);
+    storage.reserve_space(SpeciesID::HYDROGEN_ION, first_alloc);
 
     // Step 2: Request enough particles to fill the remainder of chunk 1 and spill over to chunk 2
     const size_t second_alloc = capacity; // Requires 1 full CHUNK_CAPACITY in total
-    auto handles = storage.allocate_space(SpeciesID::HYDROGEN_ION, second_alloc);
+    auto handles = storage.reserve_space(SpeciesID::HYDROGEN_ION, second_alloc);
 
     // Should return two segment handles: remainder of chunk 1 + start of chunk 2
     ASSERT_EQ(handles.size(), 2);
@@ -155,8 +155,8 @@ TEST_F(ParticleStorageTest, GetViewsReturnsOnlyActiveChunks) {
     const size_t capacity = Constants::CHUNK_CAPACITY;
 
     // Allocate particles across two distinct species
-    storage.allocate_space(SpeciesID::ELECTRON, capacity + 100); // Spans 2 chunks
-    storage.allocate_space(SpeciesID::HYDROGEN_ION, 50);                  // Spans 1 chunk
+    storage.reserve_space(SpeciesID::ELECTRON, capacity + 100); // Spans 2 chunks
+    storage.reserve_space(SpeciesID::HYDROGEN_ION, 50);                  // Spans 1 chunk
 
     auto electron_views = storage.get_views(SpeciesID::ELECTRON);
     auto ion_views = storage.get_views(SpeciesID::HYDROGEN_ION);
@@ -177,7 +177,7 @@ TEST_F(ParticleStorageTest, GetViewsReturnsOnlyActiveChunks) {
 TEST_F(ParticleStorageTest, SpeciesIsolation) {
     ParticleStorage storage(q);
 
-    storage.allocate_space(SpeciesID::ELECTRON, 1000);
+    storage.reserve_space(SpeciesID::ELECTRON, 1000);
 
     // Operations on ELECTRON must not affect ION counters or chunk lists
     EXPECT_EQ(storage.get_total_count(SpeciesID::ELECTRON), 1000);
@@ -193,7 +193,7 @@ TEST_F(ParticleStorageTest, SegmentHandlesContainValidPointers) {
     ParticleStorage storage(q);
     const size_t count = 100;
 
-    auto handles = storage.allocate_space(SpeciesID::ELECTRON, count);
+    auto handles = storage.reserve_space(SpeciesID::ELECTRON, count);
     auto views = storage.get_views(SpeciesID::ELECTRON);
 
     ASSERT_EQ(handles.size(), 1);
@@ -215,7 +215,7 @@ TEST_F(ParticleStorageTest, AllocateExactMultipleChunks) {
     ParticleStorage storage(q);
     const size_t exact_two_chunks = Constants::CHUNK_CAPACITY * 2;
 
-    auto handles = storage.allocate_space(SpeciesID::ELECTRON, exact_two_chunks);
+    auto handles = storage.reserve_space(SpeciesID::ELECTRON, exact_two_chunks);
 
     ASSERT_EQ(handles.size(), 2);
     EXPECT_EQ(handles[0].count, Constants::CHUNK_CAPACITY);
@@ -229,7 +229,7 @@ TEST_F(ParticleStorageTest, AllocateExactMultipleChunks) {
 TEST_F(ParticleStorageTest, QueryUninitializedSpecies) {
     ParticleStorage storage(q);
 
-    // Querying an enum ID that was never passed to allocate_space
+    // Querying an enum ID that was never passed to reserve_space
     EXPECT_EQ(storage.get_total_count(SpeciesID::NEUTRAL_HYDROGEN), 0);
     EXPECT_EQ(storage.get_total_capacity(SpeciesID::NEUTRAL_HYDROGEN), 0);
     EXPECT_EQ(storage.get_chunk_count(SpeciesID::NEUTRAL_HYDROGEN), 0);
@@ -245,7 +245,7 @@ TEST_F(ParticleStorageTest, SequentialSmallAllocations) {
     const size_t iterations = 50;
 
     for (size_t i = 0; i < iterations; ++i) {
-        auto handles = storage.allocate_space(SpeciesID::ELECTRON, small_step);
+        auto handles = storage.reserve_space(SpeciesID::ELECTRON, small_step);
         ASSERT_EQ(handles.size(), 1);
         EXPECT_EQ(handles[0].offset, i * small_step);
         EXPECT_EQ(handles[0].count, small_step);
@@ -280,7 +280,7 @@ TEST_F(ParticleStorageTest, CompactionReleasesEmptyChunk)
         auto views = storage.get_views(test_species);
         EXPECT_TRUE(views.empty());
 
-        auto handles = storage.allocate_space(test_species, particles_to_add);
+        auto handles = storage.reserve_space(test_species, particles_to_add);
         EXPECT_EQ(storage.get_chunk_count(test_species), number_of_chunks);
         EXPECT_EQ(storage.get_total_count(test_species), particles_to_add);
         EXPECT_EQ(storage.get_total_capacity(test_species), number_of_chunks*Constants::CHUNK_CAPACITY);
@@ -470,7 +470,7 @@ TEST_F(ParticleStorageTest, VerifySwapAndPopFull6DIntegrity)
 
     // 1. Alokujemy 4 cząstki w jednym chunku
     size_t num_particles = 4;
-    storage.allocate_space(species, num_particles);
+    storage.reserve_space(species, num_particles);
 
     auto views = storage.get_views(species);
     ASSERT_EQ(views.size(), 1u);
@@ -591,7 +591,7 @@ TEST_F(ParticleStorageTest, VerifySwapAndPopWithSparseParticleModification)
 
     // 1. Alokujemy niepełny chunk (10 cząstek)
     size_t num_particles = 10;
-    storage.allocate_space(species, num_particles);
+    storage.reserve_space(species, num_particles);
 
     auto views = storage.get_views(species);
     ASSERT_EQ(views.size(), 1u);
@@ -691,7 +691,7 @@ TEST_F(ParticleStorageTest, VerifySwapAndPopMiddleParticleRemoval)
 
     // 1. Alokujemy niepełny chunk (10 cząstek)
     size_t num_particles = 10;
-    storage.allocate_space(species, num_particles);
+    storage.reserve_space(species, num_particles);
 
     auto views = storage.get_views(species);
     ASSERT_EQ(views.size(), 1u);
@@ -799,7 +799,7 @@ TEST_F(ParticleStorageTest, VerifyMultiChunkTwoStageCompaction)
     // 1. Alokujemy 2 pełne chunki + 1 cząstkę (3 chunki łącznie)
     size_t chunk_cap = Constants::CHUNK_CAPACITY;
     size_t num_particles = 2 * chunk_cap + 1;
-    storage.allocate_space(species, num_particles);
+    storage.reserve_space(species, num_particles);
 
     auto views = storage.get_views(species);
     ASSERT_EQ(views.size(), 3u);
@@ -917,7 +917,7 @@ TEST_F(ParticleStorageTest, VerifyMassRemovalWithinSingleChunk)
 
     size_t chunk_cap = Constants::CHUNK_CAPACITY;
     size_t num_particles = 2 * chunk_cap + 1; // 3 chunki
-    storage.allocate_space(species, num_particles);
+    storage.reserve_space(species, num_particles);
 
     auto views = storage.get_views(species);
     ASSERT_EQ(views.size(), 3u);
@@ -996,7 +996,7 @@ TEST_F(ParticleStorageTest, MarkForRemovalDeviceDuplicateSafety) {
 
     // 1. Allocate space for initial particles to populate a chunk
     size_t initial_particles_count = 10;
-    auto segments = storage.allocate_space(species, initial_particles_count);
+    auto segments = storage.reserve_space(species, initial_particles_count);
     ASSERT_FALSE(segments.empty());
 
     // Retrieve chunk views to access device-side methods and buffers
@@ -1045,7 +1045,7 @@ TEST_F(ParticleStorageTest, MultipleMarkingAndCompactionWithDuplicates) {
 
     // 1. Alokujemy np. 30 cząstek (załóżmy, że zmieszczą się w jednym lub wielu chunkach)
     size_t count_to_add = 30;
-    auto handles = storage.allocate_space(test_species, count_to_add);
+    auto handles = storage.reserve_space(test_species, count_to_add);
     ASSERT_FALSE(handles.empty());
 
     // Sprawdzamy czy początkowy licznik się zgadza
@@ -1104,7 +1104,7 @@ TEST_F(ParticleStorageTest, VerifyMultipleMarkingAndCompactionWithDataIntegrity)
 
     // 1. Alokujemy 10 cząstek w jednym chunku
     size_t num_particles = 10;
-    storage.allocate_space(species, num_particles);
+    storage.reserve_space(species, num_particles);
 
     auto views = storage.get_views(species);
     ASSERT_EQ(views.size(), 1u);
@@ -1212,7 +1212,7 @@ TEST_F(ParticleStorageTest, VerifyCheckerboardRemovalPattern)
     SpeciesID species = static_cast<SpeciesID>(0);
 
     size_t num_particles = 10;
-    storage.allocate_space(species, num_particles);
+    storage.reserve_space(species, num_particles);
 
     auto views = storage.get_views(species);
     ASSERT_EQ(views.size(), 1u);
@@ -1317,7 +1317,7 @@ TEST_F(ParticleStorageTest, VerifyMultiChunkEmptyChunkDominoCompaction)
 
     // 1. Alokujemy 4 chunki (3 pełne + 2 cząstki w 4. chunku)
     size_t total_particles_to_add = 3 * cap + 2;
-    storage.allocate_space(species, total_particles_to_add);
+    storage.reserve_space(species, total_particles_to_add);
 
     auto views = storage.get_views(species);
     ASSERT_EQ(views.size(), 4u);
@@ -1373,7 +1373,7 @@ TEST_F(ParticleStorageTest, AllocateSpaceAfterChunkReleaseReuse)
     size_t particles_to_add = (initial_chunks - 1) * Constants::CHUNK_CAPACITY + 1; // Fills 1 full chunk + 1 particle in the second chunk
 
     // Allocate initial space
-    auto initial_handles = storage.allocate_space(species, particles_to_add);
+    auto initial_handles = storage.reserve_space(species, particles_to_add);
     EXPECT_EQ(storage.get_chunk_count(species), initial_chunks);
     
     // Save references to VRAM pointers prior to compaction (e.g., of the first chunk)
@@ -1402,7 +1402,7 @@ TEST_F(ParticleStorageTest, AllocateSpaceAfterChunkReleaseReuse)
     // 4. Main Scenario: Allocate new particles after capacity update
     // Allocate enough particles to force the re-allocation or re-occupancy of a second chunk
     size_t new_particles_to_add = Constants::CHUNK_CAPACITY;
-    auto new_handles = storage.allocate_space(species, new_particles_to_add);
+    auto new_handles = storage.reserve_space(species, new_particles_to_add);
 
     // Verify metrics after the new allocation
     EXPECT_EQ(storage.get_chunk_count(species), 2u);
@@ -1446,7 +1446,7 @@ TEST_F(ParticleStorageTest, CompactionOnlyLastParticleRemoved)
     size_t initial_chunks = 3;
     size_t particles_to_add = (initial_chunks - 1) * Constants::CHUNK_CAPACITY + 1; // Fills 2 full chunks + 1 particle in the 3rd chunk
 
-    auto handles = storage.allocate_space(species, particles_to_add);
+    auto handles = storage.reserve_space(species, particles_to_add);
     ASSERT_EQ(storage.get_chunk_count(species), initial_chunks);
 
     auto views = storage.get_views(species);
@@ -1501,7 +1501,7 @@ TEST_F(ParticleStorageTest, SimultaneousCompactionMultipleSpecies)
 
     for (size_t i = 0; i < number_of_species; ++i) {
         SpeciesID species = static_cast<SpeciesID>(i);
-        storage.allocate_space(species, particles_per_species);
+        storage.reserve_space(species, particles_per_species);
         EXPECT_EQ(storage.get_chunk_count(species), initial_chunks);
     }
 
@@ -1625,7 +1625,7 @@ TEST_F(ParticleStorageTest, ReadViewsWhenAllParticlesRemoved)
     SpeciesID species = static_cast<SpeciesID>(0);
     size_t particles_to_add = Constants::CHUNK_CAPACITY; // Exactly 1 full chunk
 
-    auto handles = storage.allocate_space(species, particles_to_add);
+    auto handles = storage.reserve_space(species, particles_to_add);
     EXPECT_EQ(storage.get_chunk_count(species), 1u);
     EXPECT_EQ(storage.get_total_count(species), particles_to_add);
 
@@ -1656,7 +1656,7 @@ TEST_F(ParticleStorageTest, ReadViewsWhenAllParticlesRemoved)
     // 4. Verification of recovery / re-allocation from scratch:
     // Try allocating new particles for the same species again to ensure storage state is clean and operational
     size_t new_particles_to_add = Constants::CHUNK_CAPACITY / 2;
-    auto new_handles = storage.allocate_space(species, new_particles_to_add);
+    auto new_handles = storage.reserve_space(species, new_particles_to_add);
 
     EXPECT_EQ(storage.get_chunk_count(species), 1u);
     EXPECT_EQ(storage.get_total_count(species), new_particles_to_add);

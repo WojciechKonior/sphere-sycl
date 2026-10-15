@@ -16,8 +16,6 @@ struct SegmentHandle {
     float* vx; float* vy; float* vz;
     size_t offset;
     size_t count;
-    int32_t* d_dead_count;
-    uint32_t* d_is_dead;
 };
 
 /// @brief Manages VRAM allocations, chunk lifecycles, and particle memory (SoA layout) per species.
@@ -44,9 +42,9 @@ public:
     ParticleStorage(ParticleStorage&&) = delete;
     ParticleStorage& operator=(ParticleStorage&&) = delete;
 
-    /// @brief Allocates capacity for `count_to_add` particles, expanding VRAM chunks as needed.
+    /// @brief Reserves capacity for `count_to_add` particles, expanding VRAM chunks as needed.
     /// @return A list of segment handles providing writable device memory views for Injectors.
-    std::vector<SegmentHandle> allocate_space(SpeciesID species, size_t count_to_add);
+    std::vector<SegmentHandle> reserve_space(SpeciesID species, size_t count_to_add);
 
     /// @brief Retrieves SoA views for all active chunks of a specific species (used by Push/Scatter solvers).
     std::vector<ChunkSoAView> get_views(SpeciesID species);

@@ -1,13 +1,18 @@
 #include "SimulationSteps/ParticleInjectorStep.hpp"
 
-ParticleInjectorStep::ParticleInjectorStep(SpeciesID species, float density, float volume)
-    : species_id_(species), number_density_(density), volume_(volume) {}
+ParticleInjectorStep::ParticleInjectorStep(SpeciesID species, float density, float volume_or_area, float temperature, 
+                         std::unique_ptr<IParticleInjectorStrategy> strategy)
+    : species_id_(species), 
+      number_density_(density), 
+      reference_volume_or_area_scale_(volume_or_area), 
+      temperature_(temperature), 
+      strategy_(std::move(strategy)) {}
 
 sycl::event ParticleInjectorStep::execute(SimulationContext &ctx, sycl::event dependency)
 {
     const auto &traits = ctx.species_registry.get(species_id_);
 
-    double total_physical_particles = number_density_ * volume_;
+    double total_physical_particles = number_density_ * reference_volume_or_area_scale_;
     size_t macro_particles_to_inject = static_cast<size_t>(total_physical_particles / traits.weight);
 
     if (macro_particles_to_inject == 0)
@@ -15,7 +20,7 @@ sycl::event ParticleInjectorStep::execute(SimulationContext &ctx, sycl::event de
         return dependency;
     }
 
-    auto handles = ctx.storage.allocate_space(species_id_, macro_particles_to_inject);
+    auto handles = ctx.storage.reserve_space(species_id_, macro_particles_to_inject);
 
     std::vector<sycl::event> injection_events;
     injection_events.reserve(handles.size());

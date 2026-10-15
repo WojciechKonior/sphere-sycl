@@ -2,7 +2,7 @@
 
 ParticleStorage::ParticleStorage(sycl::queue &q) : q_(q) {}
 
-std::vector<SegmentHandle> ParticleStorage::allocate_space(SpeciesID species, size_t count_to_add)
+std::vector<SegmentHandle> ParticleStorage::reserve_space(SpeciesID species, size_t count_to_add)
 {
     std::vector<SegmentHandle> handles;
     if (count_to_add == 0)
@@ -24,7 +24,8 @@ std::vector<SegmentHandle> ParticleStorage::allocate_space(SpeciesID species, si
 
             handles.push_back({chunk->d_posX_, chunk->d_posY_, chunk->d_posZ_,
                                chunk->d_velX_, chunk->d_velY_, chunk->d_velZ_,
-                               chunk->count(), alloc_size, chunk->d_dead_count_, chunk->d_is_dead_});
+                               chunk->count(), alloc_size
+                            });
 
             chunk->set_count(chunk->count() + alloc_size);
             remaining -= alloc_size;
@@ -41,7 +42,8 @@ std::vector<SegmentHandle> ParticleStorage::allocate_space(SpeciesID species, si
 
         handles.push_back({new_chunk->d_posX_, new_chunk->d_posY_, new_chunk->d_posZ_,
                            new_chunk->d_velX_, new_chunk->d_velY_, new_chunk->d_velZ_,
-                           0, alloc_size, new_chunk->d_dead_count_, new_chunk->d_is_dead_});
+                           0, alloc_size
+                        });
 
         new_chunk->set_count(alloc_size);
         remaining -= alloc_size;

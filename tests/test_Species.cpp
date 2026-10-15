@@ -30,16 +30,16 @@ TEST_F(SpeciesTest, ElectronMacroPropertiesCalculation) {
     };
 
     // Macro mass should be elementary mass multiplied by weight
-    float expected_macro_mass = Constants::MASS_ELECTRON * Constants::MACROPARTICLE_WEIGHT;
-    EXPECT_NEAR(electron.macro_mass(), expected_macro_mass, 1e-35f);
+    double expected_macro_mass = Constants::MASS_ELECTRON * Constants::MACROPARTICLE_WEIGHT;
+    EXPECT_NEAR(electron.macro_mass(), expected_macro_mass, 1e-35);
 
     // Macro charge should be elementary charge multiplied by weight
-    float expected_macro_charge = Constants::CHARGE_ELECTRON * Constants::MACROPARTICLE_WEIGHT;
-    EXPECT_NEAR(electron.macro_charge(), expected_macro_charge, 1e-15f);
+    double expected_macro_charge = Constants::CHARGE_ELECTRON * Constants::MACROPARTICLE_WEIGHT;
+    EXPECT_NEAR(electron.macro_charge(), expected_macro_charge, 1e-15);
 
     // q/m ratio should remain identical for elementary and macroparticles
-    float expected_q_over_m = Constants::CHARGE_ELECTRON / Constants::MASS_ELECTRON;
-    EXPECT_NEAR(electron.q_over_m(), expected_q_over_m, 1e-5f);
+    double expected_q_over_m = Constants::CHARGE_ELECTRON / Constants::MASS_ELECTRON;
+    EXPECT_NEAR(electron.q_over_m(), expected_q_over_m, 1e-5);
 }
 
 /**
@@ -54,8 +54,8 @@ TEST_F(SpeciesTest, IonAndNeutralPropertiesCalculation) {
         Constants::MACROPARTICLE_WEIGHT
     };
 
-    EXPECT_GT(proton.macro_mass(), 0.0f);
-    EXPECT_GT(proton.macro_charge(), 0.0f); // Positive charge for ion
+    EXPECT_GT(proton.macro_mass(), 0.0);
+    EXPECT_GT(proton.macro_charge(), 0.0); // Positive charge for ion
 
     SpeciesTraits neutral{
         SpeciesID::NEUTRAL_HYDROGEN,
@@ -65,9 +65,9 @@ TEST_F(SpeciesTest, IonAndNeutralPropertiesCalculation) {
         Constants::MACROPARTICLE_WEIGHT
     };
 
-    EXPECT_GT(neutral.macro_mass(), 0.0f);
-    EXPECT_EQ(neutral.macro_charge(), 0.0f); // Neutral charge must be zero
-    EXPECT_EQ(neutral.q_over_m(), 0.0f);     // q/m for neutral should be zero
+    EXPECT_GT(neutral.macro_mass(), 0.0);
+    EXPECT_EQ(neutral.macro_charge(), 0.0); // Neutral charge must be zero
+    EXPECT_EQ(neutral.q_over_m(), 0.0);     // q/m for neutral should be zero
 }
 
 /**
@@ -101,11 +101,11 @@ TEST_F(SpeciesTest, RegistryCustomRegistration) {
     SpeciesRegistry registry;
 
     SpeciesID custom_id = static_cast<SpeciesID>(99);
-    registry.register_species(custom_id, "CustomIon", 5.0e-26f, 3.204e-19f, 1.0e6f);
+    registry.register_species(custom_id, "CustomIon", 5.0e-26, 3.204e-19, 1.0e6);
 
     const auto &custom = registry.get(custom_id);
     EXPECT_EQ(custom.name, "CustomIon");
-    EXPECT_FLOAT_EQ(custom.elem_mass, 5.0e-26f);
-    EXPECT_FLOAT_EQ(custom.weight, 1.0e6f);
+    EXPECT_FLOAT_EQ(custom.elem_mass, 5.0e-26);
+    EXPECT_FLOAT_EQ(custom.weight, 1.0e6);
 }
 

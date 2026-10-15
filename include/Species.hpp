@@ -7,16 +7,16 @@
 
 /// @brief Physical and simulation configuration constants.
 namespace Constants {
-    constexpr float MACROPARTICLE_WEIGHT    = 1.0e8f;
+    constexpr double MACROPARTICLE_WEIGHT    = 1.0e8f;
 
-    constexpr float MASS_ELECTRON           = 9.109e-31f;
-    constexpr float MASS_HYDROGEN_ION       = 1.672e-27f;
-    constexpr float MASS_HYDROGEN           = 1.674e-27f;
+    constexpr double MASS_ELECTRON           = 9.109e-31f;
+    constexpr double MASS_HYDROGEN_ION       = 1.672e-27f;
+    constexpr double MASS_HYDROGEN           = 1.674e-27f;
 
-    constexpr float CHARGE_ELEMENTARY       = 1.602e-19f;
-    constexpr float CHARGE_ELECTRON         = -CHARGE_ELEMENTARY;
-    constexpr float CHARGE_HYDROGEN_ION     =  CHARGE_ELEMENTARY;
-    constexpr float CHARGE_NEUTRAL          =  0.0f;
+    constexpr double CHARGE_ELEMENTARY       = 1.602e-19f;
+    constexpr double CHARGE_ELECTRON         = -CHARGE_ELEMENTARY;
+    constexpr double CHARGE_HYDROGEN_ION     =  CHARGE_ELEMENTARY;
+    constexpr double CHARGE_NEUTRAL          =  0.0f;
 
     constexpr size_t CHUNK_CAPACITY         = 2000000; // 2e6 -> ((6*4 + 4/8)*2e6 + 8 + 8 + 4)B = 46,73MB per chunk
 }
@@ -33,18 +33,18 @@ struct SpeciesTraits {
     SpeciesID id;
     std::string name;
     
-    float elem_mass;    ///< Elementary particle mass [kg]
-    float elem_charge;  ///< Elementary particle charge [C]
-    float weight;       ///< Numerical macroparticle weight (number of physical particles per macroparticle)
+    double elem_mass;    ///< Elementary particle mass [kg]
+    double elem_charge;  ///< Elementary particle charge [C]
+    double weight;       ///< Numerical macroparticle weight (number of physical particles per macroparticle)
 
     /// @return Mass of a single macroparticle [kg].
-    float macro_mass() const;
+    double macro_mass() const;
 
     /// @return Charge of a single macroparticle [C].
-    float macro_charge() const;
+    double macro_charge() const;
 
     /// @return Charge-to-mass ratio q/m (identical for elementary and macroparticles).
-    float q_over_m() const;
+    double q_over_m() const;
 };
 
 /// @brief Registry for managing and retrieving traits of active species in the simulation.
@@ -57,7 +57,7 @@ public:
     explicit SpeciesRegistry();
 
     /// @brief Registers a new species or updates an existing entry in the registry.
-    void register_species(SpeciesID id, const std::string &name, float m, float q, float weight);
+    void register_species(SpeciesID id, const std::string &name, double m, double q, double weight);
 
     /// @brief Retrieves traits for a given species ID.
     const SpeciesTraits& get(SpeciesID id) const;

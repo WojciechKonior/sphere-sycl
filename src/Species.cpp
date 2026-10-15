@@ -1,14 +1,14 @@
 #include "Species.hpp"
 
-float SpeciesTraits::macro_mass() const { 
+double SpeciesTraits::macro_mass() const { 
     return elem_mass * weight; 
 }
 
-float SpeciesTraits::macro_charge() const { 
+double SpeciesTraits::macro_charge() const { 
     return elem_charge * weight; 
 }
 
-float SpeciesTraits::q_over_m() const { 
+double SpeciesTraits::q_over_m() const { 
     return elem_charge / elem_mass; 
 }
 
@@ -39,7 +39,7 @@ SpeciesRegistry::SpeciesRegistry() {
     );
 }
 
-void SpeciesRegistry::register_species(SpeciesID id, const std::string &name, float m, float q, float weight) {
+void SpeciesRegistry::register_species(SpeciesID id, const std::string &name, double m, double q, double weight) {
     registry_[id] = SpeciesTraits{id, name, m, q, weight};
 }
 

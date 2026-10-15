@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cmath>
+
 #include "ISimulationStep.hpp"
 #include "ParticleInjectorStrategy/IParticleInjectorStrategy.hpp"
 
@@ -13,14 +15,14 @@ class ParticleInjectorStep : public ISimulationStep
 {
 private:
     SpeciesID species_id_;                                    ///< Target particle species identifier.
-    float number_density_;                                    ///< Physical particle number density \f$n\f$ [\f$\text{m}^{-3}\f$].
-    float reference_volume_or_area_scale_;                    ///< Geometry scale parameter / volume substitute.
-    float temperature_;                                       ///< Temperature \f$T\f$ [K] for thermal velocity spreading.
+    double number_density_;                                    ///< Physical particle number density \f$n\f$ [\f$\text{m}^{-3}\f$].
+    double reference_volume_or_area_scale_;                    ///< Geometry scale parameter / volume substitute.
+    double temperature_;                                       ///< Temperature \f$T\f$ [K] for thermal velocity spreading.
     std::unique_ptr<IParticleInjectorStrategy> strategy_;     ///< Geometry and generation strategy (Point/Beam).
 
 public:
     /// @brief Constructs a particle injector step with a given strategy and physical parameters.
-    ParticleInjectorStep(SpeciesID species, float density, float volume_or_area, float temperature, 
+    ParticleInjectorStep(SpeciesID species, double density, double volume_or_area, double temperature, 
                          std::unique_ptr<IParticleInjectorStrategy> strategy);
 
     /// @brief Executes the simulation step asynchronously using SYCL event dependencies.
@@ -28,4 +30,7 @@ public:
 
     /// @brief Retrieves the human-readable name of the simulation step.
     std::string name() const override;
+
+    /// @brief Computes the number of macroparticles to inject for the current time step.
+    size_t compute_macro_particles_to_inject(const SimulationContext &ctx) const;
 };

@@ -11,7 +11,7 @@ struct SimulationContext {
     GridField &grid;                    ///< Field solver data and spatial grid structures
     SpeciesRegistry &species_registry;  ///< Registry holding physical and numerical traits of active species
     
-    float dt;                           ///< Time increment per simulation step [s]
-    float current_time = 0.0f;          ///< Elapsed physical simulation time [s]
+    double dt;                           ///< Time increment per simulation step [s]
+    double current_time = 0.0f;          ///< Elapsed physical simulation time [s]
     size_t current_step = 0;            ///< Current timestep iteration index
 };

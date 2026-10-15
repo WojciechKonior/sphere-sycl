@@ -13,5 +13,8 @@ struct Vector3 {
  * @brief Abstract interface for particle injection geometry and velocity distribution strategies.
  */
 class IParticleInjectorStrategy{
-
+public:
+    virtual ~IParticleInjectorStrategy() = default;
+    virtual double get_surface_area() const = 0;
+    virtual double get_characteristic_velocity() const = 0;
 };

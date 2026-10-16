@@ -32,6 +32,7 @@ set(HEADERS
     include/GridField.hpp
     include/ParticleStorage.hpp
     include/SimulationEngine.hpp
+    include/SimulationUtils.hpp
     include/Species.hpp
 )
 

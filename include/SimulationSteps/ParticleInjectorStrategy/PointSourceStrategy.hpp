@@ -1,25 +1,51 @@
 #pragma once
 
 #include "IParticleInjectorStrategy.hpp"
+#include "SimulationUtils.hpp"
 
-namespace SimulationUtils {
-    /**
-     * @brief Generates a high-quality pseudorandom float in [0, 1) using PCG Hash.
-     * @param seed Unique global identifier (e.g., global particle index).
-     * @param salt Salt or dimension discriminator (e.g., 1 for radius, 2 for theta, etc.).
-     */
-    inline float pcg_random_float(uint64_t seed, uint32_t salt)
-    {
-        // 1. PCG Hash core
-        uint32_t combined = static_cast<uint32_t>(seed ^ (seed >> 32)) + salt * 0x9e3779b9u;
-        uint32_t state = combined * 747796405u + 2891336453u;
-        uint32_t word = ((state >> ((state >> 28u) + 4u)) ^ state) * 277803737u;
-        uint32_t hash_val = (word >> 22u) ^ word;
-    
-        // 2. Convert to float [0, 1) with full mantissa precision
-        return static_cast<float>(hash_val) / 4294967296.0f;
+/**
+ * @brief Maxwell-Boltzmann thermal velocity distribution policy.
+ * 
+ * Applies thermal velocity noise (Gaussian distribution) using the Box-Muller 
+ * transform driven by deterministic PCG random number generator salts. 
+ * Suitable for thermal plasmas and gases in thermodynamic equilibrium.
+ */
+struct MaxwellBoltzmannDistribution {
+    double temperature; ///< Temperature of the species in Kelvin [K].
+
+    /// @brief Constructs a Maxwell-Boltzmann velocity distribution.
+    explicit MaxwellBoltzmannDistribution(double temp) : temperature(temp) {}
+
+    /// @brief Applies thermal velocity offsets to the base velocities on the GPU device.
+    void apply(uint64_t seed_idx, float &vx_base, float &vy_base, float &vz_base, double particle_mass) const {
+        if (temperature <= 0.0 || particle_mass <= 0.0) {
+            return;
+        }
+
+        // Thermal velocity standard deviation for a single spatial dimension: v_th = sqrt(k_B * T / m)
+        float v_th = static_cast<float>(sycl::sqrt(Constants::k_B * temperature / particle_mass));
+
+        // Fetch independent uniform random numbers in [0, 1) using dedicated PCG salts (4 to 7)
+        float u1 = sycl::fmax(SimulationUtils::pcg_random_float(seed_idx, 4), 1e-7f);
+        float u2 = SimulationUtils::pcg_random_float(seed_idx, 5);
+        float u3 = sycl::fmax(SimulationUtils::pcg_random_float(seed_idx, 6), 1e-7f);
+        float u4 = SimulationUtils::pcg_random_float(seed_idx, 7);
+
+        // Box-Muller transform for X and Y components
+        float mag = sycl::sqrt(-2.0f * sycl::log(u1));
+        float z0 = mag * sycl::cos(2.0f * static_cast<float>(Constants::PI) * u2);
+        float z1 = mag * sycl::sin(2.0f * static_cast<float>(Constants::PI) * u3);
+
+        // Box-Muller transform for Z component (using independent logarithmic magnitude)
+        float mag_z = sycl::sqrt(-2.0f * sycl::log(u3));
+        float z2 = mag_z * sycl::cos(2.0f * static_cast<float>(Constants::PI) * u4);
+
+        // Add thermal spreading components to the base stream velocities
+        vx_base += z0 * v_th;
+        vy_base += z1 * v_th;
+        vz_base += z2 * v_th;
     }
-}
+};
 
 /**
  * @brief Point or spherical injection source strategy.
@@ -27,15 +53,17 @@ namespace SimulationUtils {
  * Generates particles around a central point, optionally distributed within a sphere 
  * of a given radius with thermal velocity spreading.
  */
+template <typename VelocityDistributionPolicy = MaxwellBoltzmannDistribution>
 class PointSourceStrategy : public IParticleInjectorStrategy {
 private:
     Vector3 center_;
     double mean_velocity_;
     double sphere_radius_;
+    VelocityDistributionPolicy velocity_distribution_;
 
 public:
-    PointSourceStrategy(Vector3 center, double mean_velocity, double sphere_radius)
-        : center_(center), mean_velocity_(mean_velocity), sphere_radius_(sphere_radius) {}
+    PointSourceStrategy(Vector3 center, double mean_velocity, double sphere_radius, VelocityDistributionPolicy dist_policy = {})
+        : center_(center), mean_velocity_(mean_velocity), sphere_radius_(sphere_radius), velocity_distribution_(dist_policy) {}
 
     double get_surface_area() const override {
         if (sphere_radius_ > 0.0) return 4.0 * Constants::PI * sphere_radius_ * sphere_radius_;
@@ -81,7 +109,6 @@ public:
         
         size_t count = handle.count;
         uint64_t global_offset = params.global_offset;
-        double temperature = params.temperature;
         double particle_mass = params.particle_mass;
 
         double mean_radial_velocity = mean_velocity_;
@@ -89,6 +116,8 @@ public:
         double R1 = sphere_radius_;
         double dr = mean_radial_velocity * params.dt;
         double R2 = R1 + dr; // Promień sfery granicznej
+
+        auto distribution_policy = velocity_distribution_;
 
         cgh.parallel_for(sycl::range<1>(count), [=](sycl::id<1> idx) {
             size_t i = idx[0];
@@ -100,7 +129,7 @@ public:
             d_py[i] = pos.y;
             d_pz[i] = pos.z;
 
-            Vector3 vel = device_generate_velocity(seed_idx, mean_radial_velocity, temperature, particle_mass, pos, center);
+            Vector3 vel = device_generate_velocity(seed_idx, mean_radial_velocity, particle_mass, pos, center, distribution_policy);
 
             d_vx[i] = vel.x;
             d_vy[i] = vel.y;
@@ -113,11 +142,6 @@ public:
         float xi1 = SimulationUtils::pcg_random_float(seed_idx, 1); // Do promienia
         float xi2 = SimulationUtils::pcg_random_float(seed_idx, 2); // Do cos(theta)
         float xi3 = SimulationUtils::pcg_random_float(seed_idx, 3); // Do phi
-
-        // 2. Modelowanie gęstości malejącej od R1 do R2
-        // float r1 = static_cast<float>(R1);
-        // float r2 = static_cast<float>(R2);
-        // float r = r2 - (r2 - r1) * sycl::sqrt(xi1);
 
         float r = 0.0f;
         
@@ -147,8 +171,7 @@ public:
         return {px, py, pz};
     }
 
-    static inline Vector3 device_generate_velocity(uint64_t seed_idx, double mean_radial_velocity, double temperature, double particle_mass, Vector3 position, Vector3 center) {
-        // 4. Kierunek prędkości (radialnie na zewnątrz od środka sfery)
+    static inline Vector3 device_generate_velocity(uint64_t seed_idx, double mean_radial_velocity, double particle_mass, Vector3 position, Vector3 center, VelocityDistributionPolicy distribution_policy) {
         float dx = position.x - static_cast<float>(center.x);
         float dy = position.y - static_cast<float>(center.y);
         float dz = position.z - static_cast<float>(center.z);
@@ -164,34 +187,7 @@ public:
         float vy_base = ny * v_mean;
         float vz_base = nz * v_mean;
 
-        // 5. Dodanie składowej termicznej (fizyczny rozkład Maxwella-Boltzmanna / Gaussa)
-        if (temperature > 0.0 && particle_mass > 0.0) {
-            // Odchylenie standardowe dla jednej składowej przestrzennej v_th = sqrt(k_B * T / m)
-            float v_th = static_cast<float>(sycl::sqrt(Constants::k_B * temperature / particle_mass));
-
-            // Pobieramy liczby losowe dla Boxa-Mullera (używamy sol od 4 do 7)
-            float u1 = SimulationUtils::pcg_random_float(seed_idx, 4);
-            float u2 = SimulationUtils::pcg_random_float(seed_idx, 5);
-            float u3 = SimulationUtils::pcg_random_float(seed_idx, 6);
-            float u4 = SimulationUtils::pcg_random_float(seed_idx, 7);
-
-            // Zabezpieczenie przed log(0)
-            u1 = sycl::fmax(u1, 1e-7f);
-            u3 = sycl::fmax(u3, 1e-7f);
-
-            // Transformacja Boxa-Mullera dla osi X i Y
-            float mag = sycl::sqrt(-2.0f * sycl::log(u1));
-            float z0 = mag * sycl::cos(2.0f * static_cast<float>(Constants::PI) * u2);
-            float z1 = mag * sycl::sin(2.0f * static_cast<float>(Constants::PI) * u3); // u3 lub kolejna para dla Z
-
-            // Dla osi Z bierzemy drugą parę (lub upraszczamy, ale dla pełnej niezależności dymensyjnej bierzemy osobną parę)
-            float mag_z = sycl::sqrt(-2.0f * sycl::log(u3));
-            float z2 = mag_z * sycl::cos(2.0f * static_cast<float>(Constants::PI) * u4);
-
-            vx_base += z0 * v_th;
-            vy_base += z1 * v_th;
-            vz_base += z2 * v_th;
-        }
+        distribution_policy.apply(seed_idx, vx_base, vy_base, vz_base, particle_mass);
 
         return {vx_base, vy_base, vz_base};
     }

@@ -1,19 +1,16 @@
 #include "SimulationSteps/ParticleInjectorStep.hpp"
 
-ParticleInjectorStep::ParticleInjectorStep(SpeciesID species, double density, double volume_or_area, double temperature, 
+ParticleInjectorStep::ParticleInjectorStep(SpeciesID species, double density, double volume_or_area, 
                          std::unique_ptr<IParticleInjectorStrategy> strategy)
     : species_id_(species), 
       number_density_(density), 
-      reference_volume_or_area_scale_(volume_or_area), 
-      temperature_(temperature), 
+      reference_volume_or_area_scale_(volume_or_area),  
       strategy_(std::move(strategy)) {}
 
 
 size_t ParticleInjectorStep::compute_macro_particles_to_inject(const SimulationContext &ctx) const {
     return strategy_->compute_macro_particles_to_inject(ctx, species_id_, number_density_);
 }
-
-
 
 sycl::event ParticleInjectorStep::execute(SimulationContext &ctx, sycl::event dependency)
 {
@@ -35,7 +32,6 @@ sycl::event ParticleInjectorStep::execute(SimulationContext &ctx, sycl::event de
     // Przygotowanie wspólnych parametrów fizycznych
     InjectionParameters params{
         .dt = dt,
-        .temperature = temperature_,
         .particle_mass = traits.elem_mass * traits.weight,
         .global_offset = 0, // Będziemy aktualizować w pętli
         .total_macro_particles = macro_particles_to_inject

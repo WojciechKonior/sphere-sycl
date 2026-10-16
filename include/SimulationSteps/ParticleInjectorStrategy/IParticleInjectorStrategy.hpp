@@ -12,7 +12,6 @@ struct Vector3 {
 /// @brief Parametry fizyczne i środowiskowe przekazywane do strategii generowania na GPU.
 struct InjectionParameters {
     double dt;
-    double temperature;
     double particle_mass;
     uint64_t global_offset;
     size_t total_macro_particles;

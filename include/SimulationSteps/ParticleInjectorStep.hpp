@@ -17,12 +17,11 @@ private:
     SpeciesID species_id_;                                    ///< Target particle species identifier.
     double number_density_;                                    ///< Physical particle number density \f$n\f$ [\f$\text{m}^{-3}\f$].
     double reference_volume_or_area_scale_;                    ///< Geometry scale parameter / volume substitute.
-    double temperature_;                                       ///< Temperature \f$T\f$ [K] for thermal velocity spreading.
     std::unique_ptr<IParticleInjectorStrategy> strategy_;     ///< Geometry and generation strategy (Point/Beam).
 
 public:
     /// @brief Constructs a particle injector step with a given strategy and physical parameters.
-    ParticleInjectorStep(SpeciesID species, double density, double volume_or_area, double temperature, 
+    ParticleInjectorStep(SpeciesID species, double density, double volume_or_area, 
                          std::unique_ptr<IParticleInjectorStrategy> strategy);
 
     /// @brief Executes the simulation step asynchronously using SYCL event dependencies.

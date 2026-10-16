@@ -23,10 +23,17 @@ public:
         return characteristic_velocity_;
     }
 
-    // void generate_on_device(double*, double*, double*, double*, double*, double*, 
-    //                         size_t, uint64_t, double, double, sycl::handler&) const override {
-    //     // Stub do testów obliczeniowych (nie używany w tym teście)
-    // }
+    size_t compute_macro_particles_to_inject(const SimulationContext &ctx, SpeciesID species_id, double number_density) const override {
+        if (ctx.dt <= 0.0 || number_density <= 0.0) 
+            return 0;
+        const auto &traits = ctx.species_registry.get(species_id);
+        double dt = static_cast<double>(ctx.dt);
+        double total_physical_particles = number_density * characteristic_velocity_ * surface_area_ * dt;
+        double macro_particles_to_inject = total_physical_particles / static_cast<double>(traits.weight);
+        return static_cast<size_t>(std::lround(macro_particles_to_inject));
+    }
+
+    void device_initialize_particles(const SegmentHandle &handle, const InjectionParameters &params, sycl::handler &cgh) const override {}
 };
 
 /**

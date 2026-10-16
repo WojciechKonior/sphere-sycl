@@ -1666,3 +1666,51 @@ TEST_F(ParticleStorageTest, ReadViewsWhenAllParticlesRemoved)
     EXPECT_NE(recovered_views[0].px, nullptr); // Valid USM pointer should be provisioned
     EXPECT_EQ(recovered_views[0].count, new_particles_to_add);
 }
+
+/**
+ * @test Verifies that reserve_space correctly calculates offsets and counts in SegmentHandles 
+ *       across partially filled chunks and newly allocated chunks.
+ */
+TEST_F(ParticleStorageTest, ReserveSpaceHandlesAndOffsetsValidation) {
+    // Krok 1: Sprawdzamy rezerwację na pustym magazynie (wymusi alokację nowego chunku)
+    SpeciesID test_species = SpeciesID::ELECTRON;
+    size_t initial_request = 100;
+    ParticleStorage storage_(q);
+
+    auto handles1 = storage_.reserve_space(test_species, initial_request);
+
+    // Oczekujemy dokładnie jednego handle'a dla pierwszego chunku
+    ASSERT_EQ(handles1.size(), 1u);
+    EXPECT_EQ(handles1[0].offset, 0u);             // Nowy chunk zaczyna się od offsetu 0
+    EXPECT_EQ(handles1[0].count, initial_request); // Zarezerwowano tyle, o ile prosimy
+    EXPECT_NE(handles1[0].px, nullptr);            // Wskaźniki VRAM nie mogą być nullptr
+
+    // Krok 2: Rezerwujemy kolejną porcję, która zmieści się w tym samym chunku (częściowe wypełnienie)
+    size_t second_request = 150;
+    auto handles2 = storage_.reserve_space(test_species, second_request);
+
+    ASSERT_EQ(handles2.size(), 1u);
+    // Offset powinien wskazywać na dotychczasowy stan liczności cząstek w chunku (czyli 100)
+    EXPECT_EQ(handles2[0].offset, 100u); 
+    EXPECT_EQ(handles2[0].count, second_request);
+
+    // Krok 3: Rezerwujemy dużą paczkę, która przekracza pojemność pojedynczego chunku 
+    // i wymusi podział na wiele segmentów / alokację nowych chunków.
+    // Załóżmy, że CHUNK_CAPACITY jest znane (np. testujemy duże żądanie).
+    size_t large_request = Constants::CHUNK_CAPACITY + 50; 
+    auto handles3 = storage_.reserve_space(test_species, large_request);
+
+    // Powinniśmy otrzymać co najmniej dwa handle'y (reszta starego chunku + nowy chunk)
+    ASSERT_GE(handles3.size(), 2u);
+
+    // Pierwszy handle powinien dopełnić poprzedni chunk do pełnej pojemności
+    size_t capacity_per_chunk = Constants::CHUNK_CAPACITY;
+    size_t space_left_in_first_chunk = capacity_per_chunk - (initial_request + second_request);
+    
+    EXPECT_EQ(handles3[0].offset, initial_request + second_request);
+    EXPECT_EQ(handles3[0].count, space_left_in_first_chunk);
+
+    // Drugi handle powinien wskazywać na nowo utworzony chunk, więc jego offset musi być równy 0!
+    EXPECT_EQ(handles3[1].offset, 0u);
+    EXPECT_EQ(handles3[1].count, large_request - space_left_in_first_chunk);
+}

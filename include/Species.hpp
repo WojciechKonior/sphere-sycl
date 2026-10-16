@@ -17,6 +17,8 @@ namespace Constants {
     constexpr double CHARGE_ELECTRON         = -CHARGE_ELEMENTARY;
     constexpr double CHARGE_HYDROGEN_ION     =  CHARGE_ELEMENTARY;
     constexpr double CHARGE_NEUTRAL          =  0.0f;
+    constexpr double k_B                     = 1.380649e-23; // Boltzmann constant
+    constexpr double PI                      = 3.14159265358979323846;
 
     constexpr size_t CHUNK_CAPACITY         = 2000000; // 2e6 -> ((6*4 + 4/8)*2e6 + 8 + 8 + 4)B = 46,73MB per chunk
 }

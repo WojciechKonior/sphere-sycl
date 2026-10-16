@@ -24,15 +24,37 @@ public:
     }
 
     double get_surface_area() const override {
-        // Powierzchnia dysku/tarczy/ściany: pi * r^2
-        if (circle_radius_ > 0.0f) {
-            constexpr double pi = 3.14159265f;
-            return pi * circle_radius_ * circle_radius_;
-        }
-        return 1.0f;
+        if (circle_radius_ > 0.0) return Constants::PI * circle_radius_ * circle_radius_;
+        return 0.0;
     }
 
     double get_characteristic_velocity() const override {
-        return speed_mag_ > 0.0f ? speed_mag_ : 1.0f;
+        return speed_mag_ > 0.0 ? speed_mag_ : 1.0;
     }
+
+    size_t compute_macro_particles_to_inject(const SimulationContext &ctx, SpeciesID species_id, double number_density) const override {
+        const auto &traits = ctx.species_registry.get(species_id);
+        double dt = static_cast<double>(ctx.dt);
+        double v_mean = static_cast<double>(get_characteristic_velocity());
+        double surface_area = static_cast<double>(get_surface_area());
+
+        double total_physical_particles = 0.0;
+
+        if (surface_area > 0.0) {
+            total_physical_particles = number_density * v_mean * surface_area * dt;
+        } else {
+            double distance = v_mean * dt;
+            total_physical_particles = number_density * distance;
+        }
+
+        if (total_physical_particles <= 0.0) {
+            return 0;
+        }
+
+        double macro_particles_to_inject = total_physical_particles / static_cast<double>(traits.weight);
+        return static_cast<size_t>(std::lround(macro_particles_to_inject));
+    }
+
+    void device_initialize_particles(const SegmentHandle &handle, const InjectionParameters &params, sycl::handler &cgh) const override {}
+
 };

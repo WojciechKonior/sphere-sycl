@@ -5,7 +5,7 @@ set(CMAKE_CXX_COMPILER icpx)
 
 project(PicSimulation CXX)
 
-# Standard C++20
+# Standard C++23
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)

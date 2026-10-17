@@ -1638,7 +1638,7 @@ TEST_F(ParticleStorageTest, ReadViewsWhenAllParticlesRemoved)
         cgh.parallel_for(sycl::range<1>(view.count), [=](sycl::id<1> idx){
             view.device_mark_for_removal(idx[0]);
         });
-    });
+    }).wait();
 
     // Execute compaction, which should completely release the chunk since it's now empty
     storage.free_marked_particles();

@@ -10,11 +10,70 @@ set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
-# Flagi SYCL i optymalizacji dla Intel OneAPI
+# Konfiguracja kompilacji
+set(CMAKE_BUILD_TYPE Release)
+
+# Wybór backendu: NVIDIA, AMD lub INTEL
+set(PICSIM_GPU "NVIDIA" CACHE STRING "GPU backend")
+set_property(CACHE PICSIM_GPU PROPERTY STRINGS NVIDIA AMD INTEL)
+
+# Architektura GPU (używana dla NVIDIA i AMD)
+set(PICSIM_GPU_ARCH "sm_75" CACHE STRING "GPU architecture")
+
+# Wspólne flagi SYCL
 add_compile_options(-fsycl -O3 -g3 -Werror)
 add_link_options(-fsycl)
 
-set(CMAKE_BUILD_TYPE Release)
+# Konfiguracja zależna od producenta GPU
+if(PICSIM_GPU STREQUAL "NVIDIA")
+
+    message(STATUS "PicSimulation: NVIDIA CUDA backend")
+    message(STATUS "GPU architecture: ${PICSIM_GPU_ARCH}")
+
+    add_compile_options(
+        -fsycl-targets=nvptx64-nvidia-cuda
+        -Xsycl-target-backend=nvptx64-nvidia-cuda
+        --cuda-gpu-arch=${PICSIM_GPU_ARCH}
+    )
+
+    add_link_options(
+        -fsycl-targets=nvptx64-nvidia-cuda
+        -Xsycl-target-backend=nvptx64-nvidia-cuda
+        --cuda-gpu-arch=${PICSIM_GPU_ARCH}
+    )
+
+elseif(PICSIM_GPU STREQUAL "AMD")
+
+    message(STATUS "PicSimulation: AMD HIP backend")
+    message(STATUS "GPU architecture: ${PICSIM_GPU_ARCH}")
+
+    add_compile_options(
+        -fsycl-targets=amdgcn-amd-amdhsa
+        -Xsycl-target-backend=amdgcn-amd-amdhsa
+        --offload-arch=${PICSIM_GPU_ARCH}
+    )
+
+    add_link_options(
+        -fsycl-targets=amdgcn-amd-amdhsa
+        -Xsycl-target-backend=amdgcn-amd-amdhsa
+        --offload-arch=${PICSIM_GPU_ARCH}
+    )
+
+elseif(PICSIM_GPU STREQUAL "INTEL")
+
+    message(STATUS "PicSimulation: Intel GPU backend")
+
+    add_compile_options(-fsycl-targets=spir64)
+    add_link_options(-fsycl-targets=spir64)
+
+else()
+
+    message(FATAL_ERROR
+        "Nieznany PICSIM_GPU='${PICSIM_GPU}'. "
+        "Wybierz NVIDIA, AMD lub INTEL."
+    )
+
+endif()
 
 # 1. Deklaracja plików nagłówkowych (dla IDE)
 set(HEADERS

@@ -1,6 +1,8 @@
 #pragma once
 
 #include "ISimulationStep.hpp"
+#include "ParticleStorage.hpp"
+#include "GridField.hpp"
 
 /**
  * @brief Simulation step that deposits macroparticle charges onto the spatial grid.

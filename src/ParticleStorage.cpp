@@ -1,4 +1,5 @@
 #include "ParticleStorage.hpp"
+#include "Chunk.hpp"
 
 ParticleStorage::ParticleStorage(sycl::queue &q) : q_(q) {}
 

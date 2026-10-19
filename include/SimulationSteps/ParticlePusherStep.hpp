@@ -1,6 +1,7 @@
 #pragma once
 
 #include "ISimulationStep.hpp"
+#include "ParticleStorage.hpp"
 
 /// @brief Simulation step that advances particle positions and velocities using field forces (Boris Pusher algorithm).
 class ParticlePusherStep : public ISimulationStep

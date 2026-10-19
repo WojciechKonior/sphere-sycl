@@ -4,6 +4,7 @@
 
 #include "ISimulationStep.hpp"
 #include "ParticleInjectorStrategy/IParticleInjectorStrategy.hpp"
+#include "SimulationUtils.hpp"
 
 /**
  * @brief Simulation step responsible for injecting new macroparticles into the VRAM storage.

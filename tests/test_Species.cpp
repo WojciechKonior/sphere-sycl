@@ -1,6 +1,7 @@
 #include <gtest/gtest.h>
 #include <sycl/sycl.hpp>
 #include "Species.hpp"
+#include "SimulationUtils.hpp"
 
 /**
  * @class SpeciesTraitsTest

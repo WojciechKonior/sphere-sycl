@@ -80,13 +80,13 @@ set(HEADERS
     include/SimulationSteps/ParticleInjectorStrategy/BeamSourceStrategy.hpp
     include/SimulationSteps/ParticleInjectorStrategy/IParticleInjectorStrategy.hpp
     include/SimulationSteps/ParticleInjectorStrategy/PointSourceStrategy.hpp
+    include/SimulationSteps/ParticleInjectorStrategy/VelocityDistributionPolicy.hpp
     include/SimulationSteps/ChargeDepositionStep.hpp
     include/SimulationSteps/FieldSolverStep.hpp
     include/SimulationSteps/ISimulationStep.hpp
     include/SimulationSteps/ParticleColliderStep.hpp
     include/SimulationSteps/ParticleInjectorStep.hpp
     include/SimulationSteps/ParticlePusherStep.hpp
-    include/SimulationSteps/SimulationContext.hpp
     include/Chunk.hpp
     include/GridField.hpp
     include/ParticleStorage.hpp

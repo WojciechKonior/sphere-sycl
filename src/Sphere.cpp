@@ -56,6 +56,8 @@ int main() {
     // 5. Uruchomienie symulacji
     engine.run(2);
 
+    std::cout <<"DONE\n";
+
     return 0;
 }
 

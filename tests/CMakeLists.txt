@@ -10,6 +10,7 @@ FetchContent_MakeAvailable(googletest)
 
 # Tworzenie pliku wykonywalnego z testami (np. test_chunk.cpp)
 add_executable(picsim_tests 
+    SimulationSteps/ParticleInjectorStrategy/test_VelocityDistributionPolicy.cpp
     SimulationSteps/test_ChargeDepositionStep.cpp
     SimulationSteps/test_FieldSolverStep.cpp
     SimulationSteps/test_ParticleColliderStep.cpp

@@ -9,7 +9,6 @@ struct InjectionParameters {
     double dt;
     double particle_mass;
     uint64_t global_offset;
-    size_t total_macro_particles;
 };
 
 /**

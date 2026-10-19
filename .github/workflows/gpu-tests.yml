@@ -1,0 +1,43 @@
+name: NVIDIA GPU Tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+jobs:
+  gpu-tests:
+    name: NVIDIA SYCL tests
+    runs-on: [self-hosted, Linux, X64]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build and test
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source /opt/intel/oneapi/setvars.sh --force
+
+          export LD_LIBRARY_PATH="/usr/lib/wsl/lib:$HOME/unified-runtime-v630/lib:/usr/local/cuda-12.8/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"
+          export UR_ADAPTERS_FORCE_LOAD="$HOME/unified-runtime-v630/lib/libur_adapter_cuda.so"
+
+          echo "=== Check NVIDIA SYCL device ==="
+          sycl-ls
+
+          echo "=== Configure CMake ==="
+          cmake -S . -B build-ci \
+            -DPICSIM_GPU=NVIDIA \
+            -DPICSIM_GPU_ARCH=sm_75
+
+          echo "=== Build ==="
+          cmake --build build-ci --parallel 4
+
+          echo "=== Run tests ==="
+          ctest --test-dir build-ci --output-on-failure

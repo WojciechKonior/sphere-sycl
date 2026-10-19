@@ -1,4 +1,5 @@
 #include "Species.hpp"
+#include "SimulationUtils.hpp"
 
 double SpeciesTraits::macro_mass() const { 
     return elem_mass * weight; 

@@ -3,6 +3,7 @@
 #include <sycl/sycl.hpp>
 #include <new>
 #include "Species.hpp"
+#include "SimulationUtils.hpp"
 
 ///@brief Lightweight Structure of Arrays (SoA) view used to pass device VRAM pointers into SYCL kernels.
 struct ChunkSoAView {

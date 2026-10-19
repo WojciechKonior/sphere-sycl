@@ -1,9 +1,9 @@
 #include <gtest/gtest.h>
 #include <sycl/sycl.hpp>
 #include "Species.hpp"
-#include "SimulationSteps/SimulationContext.hpp" // lub odpowiednik definiujący SimulationContext
 #include "SimulationSteps/ParticleInjectorStep.hpp"
 #include "SimulationSteps/ParticleInjectorStrategy/IParticleInjectorStrategy.hpp"
+#include "GridField.hpp"
 
 // Pomocnicza strategia mockująca do testów analitycznych
 class MockInjectorStrategy : public IParticleInjectorStrategy {

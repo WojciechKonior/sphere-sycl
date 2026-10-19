@@ -10,6 +10,8 @@
 #include "Species.hpp"
 #include "Chunk.hpp"
 
+class Chunk;
+
 /// @brief Lightweight handle passed to Injectors specifying the target VRAM region for writing new particles.
 struct SegmentHandle {
     float* px; float* py; float* pz;

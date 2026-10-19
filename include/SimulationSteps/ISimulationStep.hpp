@@ -1,6 +1,6 @@
 #pragma once
 
-#include "SimulationContext.hpp"
+#include "SimulationUtils.hpp"
 
 /// @brief Abstract interface representing a single execution step in the PIC simulation pipeline.
 class ISimulationStep {

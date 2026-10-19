@@ -21,7 +21,7 @@ jobs:
       - name: Build and test
         shell: bash
         run: |
-          set -euo pipefail
+          set -eo pipefail
 
           source /opt/intel/oneapi/setvars.sh --force
 
@@ -37,7 +37,7 @@ jobs:
             -DPICSIM_GPU_ARCH=sm_75
 
           echo "=== Build ==="
-          cmake --build build-ci --parallel 4
+          cmake --build build-ci --parallel 10
 
           echo "=== Run tests ==="
-          ctest --test-dir build-ci --output-on-failure
+          ctest --test-dir build-ci -j10 --output-on-failure

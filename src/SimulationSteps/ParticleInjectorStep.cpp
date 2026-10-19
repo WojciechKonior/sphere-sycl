@@ -33,8 +33,7 @@ sycl::event ParticleInjectorStep::execute(SimulationContext &ctx, sycl::event de
     InjectionParameters params{
         .dt = dt,
         .particle_mass = traits.elem_mass * traits.weight,
-        .global_offset = 0, // Będziemy aktualizować w pętli
-        .total_macro_particles = macro_particles_to_inject
+        .global_offset = 0 // Będziemy aktualizować w pętli
     };
 
     // 3. Iteracja po segmentach i uruchomienie równoległych kerneli na GPU

@@ -10,20 +10,23 @@ class GridField;
 namespace SimulationUtils {
     /// @brief Physical and simulation configuration constants.
     namespace Constants {
+        // Simulation constants
         constexpr double MACROPARTICLE_WEIGHT    = 1.0e8f;
+        constexpr size_t CHUNK_CAPACITY         = 2000000; // 2e6 -> ((6*4 + 4/8)*2e6 + 8 + 8 + 4)B = 46,73MB per chunk
     
+        // physical constants
         constexpr double MASS_ELECTRON           = 9.109e-31f;
-        constexpr double MASS_HYDROGEN_ION       = 1.672e-27f;
         constexpr double MASS_HYDROGEN           = 1.674e-27f;
-    
+        constexpr double MASS_HYDROGEN_ION       = 1.672e-27f;
         constexpr double CHARGE_ELEMENTARY       = 1.602e-19f;
         constexpr double CHARGE_ELECTRON         = -CHARGE_ELEMENTARY;
         constexpr double CHARGE_HYDROGEN_ION     =  CHARGE_ELEMENTARY;
         constexpr double CHARGE_NEUTRAL          =  0.0f;
         constexpr double k_B                     = 1.380649e-23; // Boltzmann constant
+
+        // mathematical constants
         constexpr double PI                      = 3.14159265358979323846;
     
-        constexpr size_t CHUNK_CAPACITY         = 2000000; // 2e6 -> ((6*4 + 4/8)*2e6 + 8 + 8 + 4)B = 46,73MB per chunk
     }
 
     /// @brief Generates a high-quality pseudorandom float in [0, 1) using PCG Hash.

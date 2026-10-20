@@ -9,18 +9,24 @@ on:
 permissions:
   contents: read
 
+concurrency:
+  group: gpu-tests-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   gpu-tests:
     name: NVIDIA SYCL tests
     runs-on: [self-hosted, Linux, X64]
-    timeout-minutes: 3
+    timeout-minutes: 10
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        timeout-minutes: 5
 
       - name: Build and test
         shell: bash
+        timeout-minutes: 5
         run: |
           set -eo pipefail
 

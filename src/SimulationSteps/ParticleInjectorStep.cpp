@@ -1,10 +1,10 @@
 #include "SimulationSteps/ParticleInjectorStep.hpp"
 
-ParticleInjectorStep::ParticleInjectorStep(SpeciesID species, double density, double volume_or_area, 
+ParticleInjectorStep::ParticleInjectorStep(SpeciesID species, double density, 
                          std::unique_ptr<IParticleInjectorStrategy> strategy)
     : species_id_(species), 
       number_density_(density), 
-      reference_volume_or_area_scale_(volume_or_area),  
+    //   reference_volume_or_area_scale_(volume_or_area),  
       strategy_(std::move(strategy)) {}
 
 

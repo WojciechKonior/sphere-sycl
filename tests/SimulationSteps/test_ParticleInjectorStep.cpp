@@ -86,7 +86,7 @@ TEST_F(ParticleInjectorStepTest, ComputeMacroParticlesStandardFlow) {
     auto strategy = std::make_unique<MockInjectorStrategy>(surface_area, characteristic_velocity);
     
     // Używamy istniejącego w rejestrze SpeciesID::ELECTRON
-    ParticleInjectorStep injector(SpeciesID::ELECTRON, number_density, 0.0, std::move(strategy));
+    ParticleInjectorStep injector(SpeciesID::ELECTRON, number_density, std::move(strategy));
 
     SimulationContext ctx{queue_, storage_, grid_, species_registry_, dt};
 
@@ -103,14 +103,14 @@ TEST_F(ParticleInjectorStepTest, ComputeMacroParticlesZeroWhenDtOrDensityZero) {
     double number_density = 1.0e18;
     auto strategy = std::make_unique<MockInjectorStrategy>(1.0, 1000.0);
     
-    ParticleInjectorStep injector(SpeciesID::ELECTRON, number_density, 0.0, std::move(strategy));
+    ParticleInjectorStep injector(SpeciesID::ELECTRON, number_density, std::move(strategy));
 
     // Przypadek 1: dt = 0.0
     SimulationContext ctx_zero_dt{queue_, storage_, grid_, species_registry_, 0.0};
     EXPECT_EQ(injector.compute_macro_particles_to_inject(ctx_zero_dt), 0u);
 
     // Przypadek 2: gęstość = 0.0
-    ParticleInjectorStep injector_zero_density(SpeciesID::ELECTRON, 0.0, 0.0, std::make_unique<MockInjectorStrategy>(1.0, 1000.0));
+    ParticleInjectorStep injector_zero_density(SpeciesID::ELECTRON, 0.0, std::make_unique<MockInjectorStrategy>(1.0, 1000.0));
     SimulationContext ctx_normal{queue_, storage_, grid_, species_registry_, 1.0e-12};
     EXPECT_EQ(injector_zero_density.compute_macro_particles_to_inject(ctx_normal), 0u);
 }
@@ -127,13 +127,13 @@ TEST_F(ParticleInjectorStepTest, ComputeMacroParticlesWeightScaling) {
 
     // Test z mniejszą wagą
     species_registry_.register_species(sp, "ProtonLight", Constants::MASS_HYDROGEN_ION, Constants::CHARGE_HYDROGEN_ION, 1.0e6);
-    ParticleInjectorStep injector_light(sp, number_density, 0.0, std::make_unique<MockInjectorStrategy>(1.0, 1000.0));
+    ParticleInjectorStep injector_light(sp, number_density, std::make_unique<MockInjectorStrategy>(1.0, 1000.0));
     SimulationContext ctx{queue_, storage_, grid_, species_registry_, dt};
     size_t count_light = injector_light.compute_macro_particles_to_inject(ctx);
 
     // Test z 10x większą wagą
     species_registry_.register_species(sp, "ProtonHeavy", Constants::MASS_HYDROGEN_ION, Constants::CHARGE_HYDROGEN_ION, 1.0e7);
-    ParticleInjectorStep injector_heavy(sp, number_density, 0.0, std::make_unique<MockInjectorStrategy>(1.0, 1000.0));
+    ParticleInjectorStep injector_heavy(sp, number_density, std::make_unique<MockInjectorStrategy>(1.0, 1000.0));
     size_t count_heavy = injector_heavy.compute_macro_particles_to_inject(ctx);
 
     // 10x większa waga powinna dać dokładnie 10x mniej makrocząstek

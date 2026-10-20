@@ -9,6 +9,8 @@
 #include "SimulationSteps/ParticleColliderStep.hpp"
 #include "SimulationSteps/ParticleInjectorStrategy/PointSourceStrategy.hpp"
 #include "SimulationSteps/ParticleInjectorStrategy/BeamSourceStrategy.hpp"
+#include "SimulationSteps/ParticleInjectorStrategy/FlatQuadeShape.hpp"
+#include "SimulationSteps/ParticleInjectorStrategy/SurfaceSourceStrategy.hpp"
 
 int main() {
     sycl::queue q;
@@ -25,7 +27,6 @@ int main() {
     engine.add_step<ParticleInjectorStep>(
         SpeciesID::ELECTRON, 
         1.0e18 /* n */, 
-        1.0e-6 /* V */,
         std::make_unique<PointSourceStrategy<MaxwellBoltzmannDistribution>>(
             Vector3{0.0f, 0.0f, 0.0f}, 
             1000.0 /* mean_v */, 
@@ -38,13 +39,22 @@ int main() {
     engine.add_step<ParticleInjectorStep>(
         SpeciesID::HYDROGEN_ION, 
         5.0e17 /* n */, 
-        2.0e-6 /* V */, 
         std::make_unique<BeamSourceStrategy<MaxwellBoltzmannDistribution>>(
             Vector3{0.0f, 0.0f, -1.0f} /* center */, 
             Vector3{0.0f, 0.0f, 5000.0f} /* velocity dir */, 
             0.5 /* beam_radius / ściana */, 
             1000.0,
             MaxwellBoltzmannDistribution(1000.0)
+        )
+    );
+
+    engine.add_step<ParticleInjectorStep>(
+        SpeciesID::ELECTRON,
+        1.0e18 /* n */,
+        std::make_unique<SurfaceSourceStrategy<FlatQuadShape, MaxwellBoltzmannDistribution>>(
+            FlatQuadShape({0.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f}, {2.0f, 2.0f, 0.0f}, {0.0f, 2.0f, 0.0f}, {0.0f, 0.0f, 400.0f}, engine.context().dt),
+            Vector3{0.0f, 0.0f, 400.0f},
+            MaxwellBoltzmannDistribution(300.0)
         )
     );
 

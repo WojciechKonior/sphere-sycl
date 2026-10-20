@@ -86,7 +86,7 @@ def configure_cmake():
     print("=== Configuring CMake ===")
     print(f"Flags: {gpu_flags}")
     
-    cmd = f"cmake -S . -B {BUILD_DIR} {gpu_flags}"
+    cmd = f"cmake -S . -B {BUILD_DIR} {gpu_flags} -G Ninja -DCMAKE_EXPORT_COMPILE_COMMANDS=ON"
     print(f"\nCommand: {cmd}\n")
     subprocess.run(cmd, shell=True, check=True)
 

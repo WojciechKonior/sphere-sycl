@@ -78,6 +78,7 @@ endif()
 # 1. Deklaracja plików nagłówkowych (dla IDE)
 set(HEADERS
     include/SimulationSteps/ParticleInjectorStrategy/BeamSourceStrategy.hpp
+    include/SimulationSteps/ParticleInjectorStrategy/FlatQuadeShape.hpp
     include/SimulationSteps/ParticleInjectorStrategy/IParticleInjectorStrategy.hpp
     include/SimulationSteps/ParticleInjectorStrategy/PointSourceStrategy.hpp
     include/SimulationSteps/ParticleInjectorStrategy/VelocityDistributionPolicy.hpp

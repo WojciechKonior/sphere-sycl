@@ -9,7 +9,8 @@ set(gtest_force_shared_crt ON CACHE BOOL "" FORCE)
 FetchContent_MakeAvailable(googletest)
 
 # Tworzenie pliku wykonywalnego z testami (np. test_chunk.cpp)
-add_executable(picsim_tests 
+add_executable(picsim_tests
+    SimulationSteps/ParticleInjectorStrategy/test_FlatQuadShape.cpp
     SimulationSteps/ParticleInjectorStrategy/test_PointSourceStrategy.cpp
     SimulationSteps/ParticleInjectorStrategy/test_VelocityDistributionPolicy.cpp
     SimulationSteps/test_ChargeDepositionStep.cpp

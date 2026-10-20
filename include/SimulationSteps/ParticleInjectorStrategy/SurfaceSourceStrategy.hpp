@@ -26,7 +26,9 @@ public:
      * @param dist_policy Velocity distribution policy (e.g., MaxwellBoltzmannDistribution).
      */
     SurfaceSourceStrategy(FlatQuadShape shape, Vector3 velocity, VelocityDistributionPolicy dist_policy = {})
-        : shape_(shape), velocity_(velocity), velocity_distribution_(dist_policy) {}
+        : shape_(shape), velocity_(velocity), velocity_distribution_(dist_policy) {
+            shape_.orient_towards_velocity(velocity_);
+        }
 
     double get_surface_area() const override {
         return shape_.get_area();
@@ -68,14 +70,22 @@ public:
         // Kopiujemy potrzebne obiekty i zmienne do lambdy SYCL (bezpieczne dla urządzenia)
         auto shape_copy = shape_;
         Vector3 velocity = velocity_;
+
         auto distribution_policy = velocity_distribution_;
+        auto param = params;
 
         cgh.parallel_for(sycl::range<1>(count), [=](sycl::id<1> idx) {
             size_t i = idx[0];
             uint64_t seed_idx = global_offset + i;
 
+            Vector3 effective_normal = shape_copy.device_get_inward_normal();
+            float normal_vel = static_cast<float>(velocity.x * effective_normal.x + 
+                                                  velocity.y * effective_normal.y + 
+                                                  velocity.z * effective_normal.z);
+            float thickness = normal_vel * static_cast<float>(param.dt);
+
             // 1. Generowanie pozycji cząstki wewnątrz warstwy powierzchniowej (GPU-safe)
-            Vector3 pos = shape_copy.device_generate_position(seed_idx);
+            Vector3 pos = shape_copy.device_generate_position(seed_idx, thickness, effective_normal);
 
             d_px[i] = pos.x;
             d_py[i] = pos.y;
@@ -96,15 +106,15 @@ private:
      */
     static inline Vector3 device_generate_velocity(
         uint64_t seed_idx, 
-        Vector3 mean_velocity, 
+        Vector3 velocity, 
         double particle_mass, 
         Vector3 /*position*/, 
         const ShapePolicy & /*shape*/, 
         VelocityDistributionPolicy distribution_policy
     ) {
-        float vx_base = static_cast<float>(mean_velocity.x);
-        float vy_base = static_cast<float>(mean_velocity.y);
-        float vz_base = static_cast<float>(mean_velocity.z);
+        float vx_base = static_cast<float>(velocity.x);
+        float vy_base = static_cast<float>(velocity.y);
+        float vz_base = static_cast<float>(velocity.z);
 
         // Aplikujemy politykę rozkładu prędkości termicznych (np. Maxwell-Boltzmann)
         distribution_policy.apply(seed_idx, vx_base, vy_base, vz_base, particle_mass);

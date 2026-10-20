@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+import sys
+import os
+import subprocess
+import shutil
+import multiprocessing
+
+BUILD_DIR = "./build"
+# Dynamic binary extension based on OS (Windows uses .exe)
+BINARY_NAME = "shpere.exe" if sys.platform == "win32" else "shpere"
+BINARY_PATH = os.path.join(BUILD_DIR, BINARY_NAME)
+
+def calculate_threads():
+    """Calculates optimal threads based on your N-1 / N-2 rule."""
+    try:
+        total_threads = multiprocessing.cpu_count()
+    except NotImplementedError:
+        total_threads = 4
+        
+    if total_threads >= 12:
+        return total_threads - 2
+    elif total_threads > 1:
+        return total_threads - 1
+    return 1
+
+THREADS = calculate_threads()
+
+def show_help():
+    print("Usage: python run.py [command]  (or ./run.py on Unix)")
+    print("")
+    print(f"Current configuration: Using -j{THREADS} for parallel jobs")
+    print("")
+    print("Commands:")
+    print(f"  (no args)  Builds the project, runs ALL tests, and runs sphere (Full dev pipeline)")
+    print("  conf       Runs CMake configuration with auto-detected GPU parameters")
+    print(f"  make       Compiles the project using parallel jobs (-j{THREADS})")
+    print("  rebuild    Cleans the build directory, re-configures, and compiles everything")
+    print(f"  tests      Ensures project is built and runs ctest (-j{THREADS})")
+    print("  sphere     Ensures project is built and runs the sphere binary")
+    print("  -h, --help Shows this help message")
+    print("")
+
+def detect_gpu_flags():
+    """Detects GPU vendor across Linux, Windows, and macOS."""
+    print("=== Auto-detecting GPU Configuration ===")
+    
+    # macOS check (Usually Apple Silicon or Intel)
+    if sys.platform == "darwin":
+        print("Detected OS: macOS (Defaulting to INTEL/Universal SYCL profile)")
+        return "-DPICSIM_GPU=INTEL"
+        
+    # Windows & Linux check via system commands or tools
+    gpu_string = ""
+    
+    # Method 1: Check if nvidia-smi is available (cross-platform for NVIDIA)
+    if shutil.which("nvidia-smi"):
+        print("Detected GPU: NVIDIA (via nvidia-smi)")
+        return "-DPICSIM_GPU=NVIDIA -DPICSIM_GPU_ARCH=sm_75"
+        
+    # Method 2: OS-specific CLI tools to scan hardware
+    try:
+        if sys.platform == "win32":
+            # Windows WMIC command
+            gpu_string = subprocess.check_output("wmic path win32_VideoController get name", shell=True).decode().lower()
+        else:
+            # Linux lspci command
+            gpu_string = subprocess.check_output("lspci", shell=True).decode().lower()
+    except Exception:
+        pass
+
+    if "nvidia" in gpu_string:
+        print("Detected GPU: NVIDIA")
+        return "-DPICSIM_GPU=NVIDIA -DPICSIM_GPU_ARCH=sm_75"
+    elif "amd" in gpu_string or "ati" in gpu_string:
+        print("Detected GPU: AMD")
+        return "-DPICSIM_GPU=AMD -DPICSIM_GPU_ARCH=sm_75"
+    elif "intel" in gpu_string:
+        print("Detected GPU: INTEL")
+        return "-DPICSIM_GPU=INTEL"
+        
+    print("Warning: No specific GPU detected. Falling back to INTEL configuration.")
+    return "-DPICSIM_GPU=INTEL"
+
+def configure_cmake():
+    gpu_flags = detect_gpu_flags()
+    print("=== Configuring CMake ===")
+    print(f"Flags: {gpu_flags}")
+    
+    cmd = f"cmake -S . -B {BUILD_DIR} {gpu_flags}"
+    print(f"\nCommand: {cmd}\n")
+    subprocess.run(cmd, shell=True, check=True)
+
+def build_project():
+    # If Makefile (Unix) or vcxproj/build.ninja (Windows) doesn't exist, configure first
+    if not os.path.exists(BUILD_DIR):
+        configure_cmake()
+        
+    print(f"=== Building project (Parallel -j{THREADS}) ===")
+    # CMake --build is cross-platform and replaces direct 'make' or 'msbuild' calls!
+    cmd = f"cmake --build {BUILD_DIR} --parallel {THREADS}"
+    print(f"\nCommand: {cmd}\n")
+    subprocess.run(cmd, shell=True, check=True)
+
+def run_tests():
+    build_project()
+    print(f"=== Running Tests (ctest -j{THREADS}) ===")
+    # ctest --test-dir is available since CMake 3.20+ and avoids manual 'cd'
+    cmd = f"ctest --test-dir {BUILD_DIR} -j {THREADS} --output-on-failure"
+    print(f"\nCommand: {cmd}\n")
+    subprocess.run(cmd, shell=True) # Allowed to fail in pipeline
+
+def run_sphere():
+    build_project()
+    if not os.path.exists(BINARY_PATH):
+        print(f"Error: Binary {BINARY_PATH} not found even after build!")
+        sys.exit(1)
+    print("=== Running Sphere ===")
+    subprocess.run(BINARY_PATH, shell=True, check=True)
+
+def main():
+    if len(sys.argv) > 1 and sys.argv[1] in ["-h", "--help"]:
+        show_help()
+        sys.exit(0)
+        
+    cmd = sys.argv[1] if len(sys.argv) > 1 else ""
+    
+    if cmd == "":
+        print("=== Running Default Pipeline ===")
+        run_tests()
+        run_sphere()
+    elif cmd in ["conf", "configure"]:
+        configure_cmake()
+    elif cmd in ["make", "build"]:
+        build_project()
+    elif cmd == "rebuild":
+        print("=== Total Rebuild: Cleaning build directory ===")
+        if os.path.exists(BUILD_DIR):
+            shutil.rmtree(BUILD_DIR)
+        configure_cmake()
+        build_project()
+    elif cmd in ["tests", "test"]:
+        run_tests()
+    elif cmd in ["sphere", "run"]:
+        run_sphere()
+    else:
+        print(f"Unknown command: {cmd}\n")
+        show_help()
+        sys.exit(1)
+
+if __name__ == "__main__":
+    main()

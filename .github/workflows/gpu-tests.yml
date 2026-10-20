@@ -13,6 +13,7 @@ jobs:
   gpu-tests:
     name: NVIDIA SYCL tests
     runs-on: [self-hosted, Linux, X64]
+    timeout-minutes: 3
 
     steps:
       - name: Checkout repository

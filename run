@@ -1,0 +1,136 @@
+#!/usr/bin/env bash
+
+# Exit immediately if a command exits with a non-zero status
+set -e
+
+BUILD_DIR="./build"
+BINARY_PATH="${BUILD_DIR}/shpere" # Adjusted to 'shpere' as per your prompt
+
+# Help menu
+show_help() {
+    echo "Usage: ./run [command]"
+    echo ""
+    echo "Commands:"
+    echo "  (no args)  Builds the project, runs ALL tests, and runs sphere (Full dev pipeline)"
+    echo "  conf       Runs CMake configuration with auto-detected GPU parameters"
+    echo "  make       Compiles the project using make -j10"
+    echo "  rebuild    Cleans the build directory, re-configures, and compiles everything"
+    echo "  tests      Ensures project is built and runs ctest"
+    echo "  sphere     Ensures project is built and runs the sphere binary"
+    echo "  -h, --help Shows this help message"
+    echo ""
+}
+
+# Catch help flags immediately before processing other arguments
+if [ "$1" = "-h" ] || [ "$1" = "--help" ]; then
+    show_help
+    exit 0
+fi
+
+# Detect GPU vendor and return appropriate CMake flags
+detect_gpu_flags() {
+    local gpu_info
+    gpu_info=$(lspci 2>/dev/null | grep -i -E "vga|3d|display" || true)
+    
+    # Check NVIDIA (either via lspci or if nvidia-smi exists)
+    if echo "$gpu_info" | grep -i "nvidia" &>/dev/null || command -v nvidia-smi &>/dev/null; then
+        echo "Detected GPU: NVIDIA" >&2
+        echo "-DPICSIM_GPU=NVIDIA -DPICSIM_GPU_ARCH=sm_75"
+        return 0
+    fi
+
+    # Check AMD
+    if echo "$gpu_info" | grep -i -E "amd|ati" &>/dev/null; then
+        echo "Detected GPU: AMD" >&2
+        echo "-DPICSIM_GPU=AMD -DPICSIM_GPU_ARCH=sm_75"
+        return 0
+    fi
+
+    # Check Intel
+    if echo "$gpu_info" | grep -i "intel" &>/dev/null; then
+        echo "Detected GPU: INTEL" >&2
+        echo "-DPICSIM_GPU=INTEL"
+        return 0
+    fi
+
+    # Fallback if nothing detected
+    echo "Warning: No specific GPU detected. Falling back to INTEL configuration." >&2
+    echo "-DPICSIM_GPU=INTEL"
+}
+
+# Common CMake configuration command
+configure_cmake() {
+    echo "=== Auto-detecting GPU Configuration ==="
+    local gpu_flags
+    gpu_flags=$(detect_gpu_flags)
+    
+    echo "=== Configuring CMake ==="
+    echo "Flags: $gpu_flags"
+    # Word splitting is intentional here to pass separate arguments to cmake
+    # shellcheck disable=SC2086
+    cmake -S . -B "$BUILD_DIR" $gpu_flags
+}
+
+# Common Build command
+build_project() {
+    # If build directory doesn't exist or Makefile is missing, configure it first
+    if [ ! -d "$BUILD_DIR" ] || [ ! -f "${BUILD_DIR}/Makefile" ]; then
+        configure_cmake
+    fi
+    echo "=== Building project (make -j$(( $(nproc) >= 12 ? $(nproc) - 2 : $(nproc) - 1 ))) ==="
+    make -C "$BUILD_DIR" -j$(( $(nproc) >= 12 ? $(nproc) - 2 : $(nproc) - 1 ))
+}
+
+# Run tests
+run_tests() {
+    build_project
+    echo "=== Running Tests (ctest -j$(( $(nproc) >= 12 ? $(nproc) - 2 : $(nproc) - 1 )) --output-on-failure) ==="
+    cd "$BUILD_DIR"
+    # ctest can fail, but we don't want to block the whole script if it's the default pipeline
+    ctest -j$(( $(nproc) >= 12 ? $(nproc) - 2 : $(nproc) - 1 )) --output-on-failure || true
+    cd ..
+}
+
+# Run the binary
+run_sphere() {
+    build_project
+    if [ ! -f "$BINARY_PATH" ]; then
+        echo "Error: Binary $BINARY_PATH not found even after build!"
+        exit 1
+    fi
+    echo "=== Running Sphere ==="
+    "$BINARY_PATH"
+}
+
+# Main command dispatcher
+case "$1" in
+    "")
+        echo "=== Running Default Pipeline ==="
+        run_tests
+        run_sphere
+        ;;
+    conf|configure)
+        configure_cmake
+        ;;
+    make|build)
+        build_project
+        ;;
+    rebuild)
+        echo "=== Total Rebuild: Cleaning build directory ==="
+        rm -rf "${BUILD_DIR:?}"/*
+        configure_cmake
+        build_project
+        ;;
+    tests|test)
+        run_tests
+        ;;
+    sphere|run)
+        run_sphere
+        ;;
+    *)
+        echo "Unknown command: $1"
+        echo ""
+        show_help
+        exit 1
+        ;;
+esac

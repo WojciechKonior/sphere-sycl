@@ -81,6 +81,7 @@ set(HEADERS
     include/SimulationSteps/ParticleInjectorStrategy/FlatQuadeShape.hpp
     include/SimulationSteps/ParticleInjectorStrategy/IParticleInjectorStrategy.hpp
     include/SimulationSteps/ParticleInjectorStrategy/PointSourceStrategy.hpp
+    include/SimulationSteps/ParticleInjectorStrategy/IParticleInjectorStrategy.hpp
     include/SimulationSteps/ParticleInjectorStrategy/VelocityDistributionPolicy.hpp
     include/SimulationSteps/ChargeDepositionStep.hpp
     include/SimulationSteps/FieldSolverStep.hpp

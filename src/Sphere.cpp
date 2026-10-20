@@ -10,6 +10,7 @@
 #include "SimulationSteps/ParticleInjectorStrategy/PointSourceStrategy.hpp"
 #include "SimulationSteps/ParticleInjectorStrategy/BeamSourceStrategy.hpp"
 #include "SimulationSteps/ParticleInjectorStrategy/FlatQuadeShape.hpp"
+#include "SimulationSteps/ParticleInjectorStrategy/SurfaceSourceStrategy.hpp"
 
 int main() {
     sycl::queue q;
@@ -47,15 +48,15 @@ int main() {
         )
     );
 
-    // engine.add_step<ParticleInjectorStep>(
-    //     SpeciesID::ELECTRON,
-    //     1.0e18 /* n */,
-    //     std::make_unique<SurfaceSourceStrategy<FlatQuadShape, MaxwellBoltzmannDistribution>>(
-    //         quad_shape,
-    //         500.0 /* mean_velocity */,
-    //         MaxwellBoltzmannDistribution(300.0)
-    //     )
-    // );
+    engine.add_step<ParticleInjectorStep>(
+        SpeciesID::ELECTRON,
+        1.0e18 /* n */,
+        std::make_unique<SurfaceSourceStrategy<FlatQuadShape, MaxwellBoltzmannDistribution>>(
+            FlatQuadShape({0.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f}, {2.0f, 2.0f, 0.0f}, {0.0f, 2.0f, 0.0f}, {0.0f, 0.0f, 400.0f}, engine.context().dt),
+            Vector3{0.0f, 0.0f, 400.0f},
+            MaxwellBoltzmannDistribution(300.0)
+        )
+    );
 
     engine.add_step<ChargeDepositionStep>();
     engine.add_step<FieldSolverStep>();

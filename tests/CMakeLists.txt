@@ -12,6 +12,7 @@ FetchContent_MakeAvailable(googletest)
 add_executable(picsim_tests
     SimulationSteps/ParticleInjectorStrategy/test_FlatQuadShape.cpp
     SimulationSteps/ParticleInjectorStrategy/test_PointSourceStrategy.cpp
+    SimulationSteps/ParticleInjectorStrategy/test_SurfaceSourceStrategy.cpp
     SimulationSteps/ParticleInjectorStrategy/test_VelocityDistributionPolicy.cpp
     SimulationSteps/test_ChargeDepositionStep.cpp
     SimulationSteps/test_FieldSolverStep.cpp

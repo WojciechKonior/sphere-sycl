@@ -59,21 +59,20 @@ public:
      * @param velocity Full 3D flow velocity vector [m/s].
      * @param dt Simulation timestep [s].
      */
-    FlatQuadShape(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, Vector3 velocity, double dt)
+    FlatQuadShape(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, double dt)
         : p0_(p0), p1_(p1), p2_(p2), p3_(p3),
-          normal_(calculate_normal(p0, p1, p2, p3)) {
-        
-        // Sprawdzenie orientacji normalnej względem wektora prędkości
-        float dot_product = velocity.x * normal_.x + velocity.y * normal_.y + velocity.z * normal_.z;
-        
-        if (dot_product < 0.0f) {
-            // Jeśli normalna jest przeciwna do prędkości, odwracamy ją i zmieniamy winding order (zamiana p1 i p3)
-            std::swap(p1_, p3_);
-            normal_ = {-normal_.x, -normal_.y, -normal_.z};
-            dot_product = -dot_product; // Ponieważ odwróciliśmy normalną, dot_product staje się dodatni
-        }
+          normal_(calculate_normal(p0, p1, p2, p3)) {}
 
-        thickness_ = static_cast<float>(dot_product * dt);
+    /**
+     * @brief Publiczna metoda dopasowująca orientację i wierzchołki do wektora prędkości.
+     */
+    void orient_towards_velocity(const Vector3 &velocity) {
+        float dot_product = velocity.x * normal_.x + velocity.y * normal_.y + velocity.z * normal_.z;
+        if (dot_product < 0.0f) {
+            std::swap(p1_, p3_);
+            // normal_ = {-normal_.x, -normal_.y, -normal_.z};
+            normal_ = calculate_normal(p0_, p1_, p2_, p3_);
+        }
     }
 
     /**
@@ -95,7 +94,7 @@ public:
     /**
      * @brief Generates a random position on the device within the planar quad layer.
      */
-    inline Vector3 device_generate_position(uint64_t seed_idx) const {
+    inline Vector3 device_generate_position(uint64_t seed_idx, float thickness, Vector3 normal) const {
         float xi_tri = SimulationUtils::pcg_random_float(seed_idx, 1);
         float xi1    = SimulationUtils::pcg_random_float(seed_idx, 2);
         float xi2    = SimulationUtils::pcg_random_float(seed_idx, 3);
@@ -124,12 +123,12 @@ public:
         float base_pz = u * a.z + v * b.z + w * c.z;
 
         // Głębokość w warstwie [0, thickness_] wzdłuż wektora normalnego
-        float h = xi_h * thickness_;
+        float h = xi_h * thickness;
 
         return {
-            base_px + h * normal_.x,
-            base_py + h * normal_.y,
-            base_pz + h * normal_.z
+            base_px + h * normal.x,
+            base_py + h * normal.y,
+            base_pz + h * normal.z
         };
     }
 

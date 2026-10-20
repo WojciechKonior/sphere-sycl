@@ -39,7 +39,7 @@ TEST_F(FlatQuadShapeTest, ConstructorAndPropertiesValidation) {
 
     // Sprawdzenie, czy poprawny czworobok tworzy się bezbłędnie
     EXPECT_NO_THROW({
-        FlatQuadShape quad(p0, p1, p2, p3, velocity, dt);
+        FlatQuadShape quad(p0, p1, p2, p3, dt);
 
         // A. Sprawdzenie pola powierzchni (1.0 * 1.0 = 1.0)
         EXPECT_NEAR(quad.compute_area(), 1.0, 1e-5);
@@ -56,7 +56,7 @@ TEST_F(FlatQuadShapeTest, ConstructorAndPropertiesValidation) {
     Vector3 invalid_p3{0.0f, 1.0f, 0.5f};
 
     EXPECT_THROW({
-        FlatQuadShape invalid_quad(p0, p1, p2, invalid_p3, velocity, dt);
+        FlatQuadShape invalid_quad(p0, p1, p2, invalid_p3, dt);
     }, std::runtime_error);
 }
 
@@ -77,7 +77,7 @@ TEST_F(FlatQuadShapeTest, MultipleShapesAreaAndNormalVerification) {
             {1.0f, 0.0f, 0.0f},
             {1.0f, 1.0f, 0.0f},
             {0.0f, 1.0f, 0.0f},
-            dummy_velocity, dt
+            dt
         );
 
         EXPECT_NEAR(quad.compute_area(), 1.0, 1e-5);
@@ -98,7 +98,7 @@ TEST_F(FlatQuadShapeTest, MultipleShapesAreaAndNormalVerification) {
             {2.0f, 0.0f, 0.0f},
             {2.0f, 3.0f, 0.0f},
             {0.0f, 3.0f, 0.0f},
-            dummy_velocity, dt
+            dt
         );
 
         EXPECT_NEAR(quad.compute_area(), 6.0, 1e-5);
@@ -119,7 +119,7 @@ TEST_F(FlatQuadShapeTest, MultipleShapesAreaAndNormalVerification) {
             {2.0f, 5.0f, 0.0f},
             {2.0f, 5.0f, 2.0f},
             {0.0f, 5.0f, 2.0f},
-            dummy_velocity, dt
+            dt
         );
 
         EXPECT_NEAR(quad.compute_area(), 4.0, 1e-5);
@@ -140,7 +140,7 @@ TEST_F(FlatQuadShapeTest, MultipleShapesAreaAndNormalVerification) {
             {2.0f, 0.0f, 0.0f},
             {3.0f, 2.0f, 0.0f},
             {1.0f, 2.0f, 0.0f},
-            dummy_velocity, dt
+            dt
         );
 
         // Pole równoległoboku o podstawie 2 i wysokości 2 = 4.0
@@ -162,7 +162,7 @@ TEST_F(FlatQuadShapeTest, MultipleShapesAreaAndNormalVerification) {
             {1.0f,  0.0f, -1.0f},
             {1.0f,  1.0f, -2.0f},
             {0.0f,  1.0f, -1.0f},
-            dummy_velocity, dt
+            dt
         );
 
         // Teoretyczne pole powierzchni dla tego kształtu wynosi sqrt(3) ~= 1.73205
@@ -197,7 +197,7 @@ TEST_F(FlatQuadShapeTest, NonCoplanarVerticesThrowsException) {
         Vector3 non_coplanar_p3{0.0f, 1.0f, 0.2f}; // z != 0
         
         EXPECT_THROW({
-            FlatQuadShape quad(p0, p1, p2, non_coplanar_p3, dummy_velocity, dt);
+            FlatQuadShape quad(p0, p1, p2, non_coplanar_p3, dt);
         }, std::runtime_error);
     }
 
@@ -212,7 +212,7 @@ TEST_F(FlatQuadShapeTest, NonCoplanarVerticesThrowsException) {
         Vector3 invalid_b3{0.0f, 0.5f, 1.0f}; // y != 0, więc nie leży w płaszczyźnie Y=0
 
         EXPECT_THROW({
-            FlatQuadShape quad(b0, b1, b2, invalid_b3, dummy_velocity, dt);
+            FlatQuadShape quad(b0, b1, b2, invalid_b3, dt);
         }, std::runtime_error);
     }
 
@@ -224,7 +224,7 @@ TEST_F(FlatQuadShapeTest, NonCoplanarVerticesThrowsException) {
         Vector3 r3{0.0f, 1.0f, 5.0f};
 
         EXPECT_THROW({
-            FlatQuadShape quad(r0, r1, r2, r3, dummy_velocity, dt);
+            FlatQuadShape quad(r0, r1, r2, r3, dt);
         }, std::runtime_error);
     }
 }
@@ -248,7 +248,8 @@ TEST_F(FlatQuadShapeTest, GpuFlatQuadPositionGenerationTest) {
     Vector3 velocity{0.0f, 0.0f, 400.0f}; // Prędkość normalna = 400 m/s wzdłuż osi Z
     double dt = 1.25e-5;                 // dt = 12.5 us -> thickness = 400 * 12.5e-5 = 0.005 m (5 mm)
     
-    FlatQuadShape quad(p0, p1, p2, p3, velocity, dt);
+    FlatQuadShape quad(p0, p1, p2, p3, dt);
+    quad.orient_towards_velocity(velocity);
     double expected_thickness = 400.0 * dt;
 
     // 1. Alokacja pamięci USM na urządzenia dla wygenerowanych pozycji
@@ -262,8 +263,11 @@ TEST_F(FlatQuadShapeTest, GpuFlatQuadPositionGenerationTest) {
         cgh.parallel_for(sycl::range<1>(num_particles), [=](sycl::id<1> idx) {
             size_t i = idx[0];
             uint64_t seed_idx = static_cast<uint64_t>(i) + 12345ULL;
+            
+            auto normal = t_quad.device_get_inward_normal();
+            auto thickness = expected_thickness;
 
-            Vector3 pos = t_quad.device_generate_position(seed_idx);
+            Vector3 pos = t_quad.device_generate_position(seed_idx, thickness, normal);
             d_px[i] = pos.x;
             d_py[i] = pos.y;
             d_pz[i] = pos.z;
@@ -396,7 +400,8 @@ TEST_F(FlatQuadShapeTest, GpuMultiShapeVarianceAndDensityTest) {
     for (const auto& tc : test_cases) {
         SCOPED_TRACE("Testing shape: " + tc.name);
 
-        FlatQuadShape quad(tc.p0, tc.p1, tc.p2, tc.p3, tc.velocity, tc.dt);
+        FlatQuadShape quad(tc.p0, tc.p1, tc.p2, tc.p3, tc.dt);
+        quad.orient_towards_velocity(tc.velocity);
         
         Vector3 norm = quad.device_get_inward_normal();
         float expected_thickness = static_cast<float>(
@@ -408,13 +413,19 @@ TEST_F(FlatQuadShapeTest, GpuMultiShapeVarianceAndDensityTest) {
         float* d_py = sycl::malloc_device<float>(num_particles, queue_);
         float* d_pz = sycl::malloc_device<float>(num_particles, queue_);
 
+        auto t_quad = quad;
+        auto vel = tc.velocity;
+
         // Przekazujemy cały obiekt quad do kernela (FlatQuadShape jest device-copyable)
         queue_.submit([&](sycl::handler& cgh) {
             cgh.parallel_for(sycl::range<1>(num_particles), [=](sycl::id<1> idx) {
                 size_t i = idx[0];
                 uint64_t seed_idx = static_cast<uint64_t>(i) + 9999ULL;
 
-                Vector3 pos = quad.device_generate_position(seed_idx);
+                auto normal = t_quad.device_get_inward_normal();
+                auto thickness = expected_thickness;
+
+                Vector3 pos = quad.device_generate_position(seed_idx, expected_thickness, normal);
                 d_px[i] = pos.x;
                 d_py[i] = pos.y;
                 d_pz[i] = pos.z;

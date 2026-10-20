@@ -52,7 +52,7 @@ int main() {
         SpeciesID::ELECTRON,
         1.0e18 /* n */,
         std::make_unique<SurfaceSourceStrategy<FlatQuadShape, MaxwellBoltzmannDistribution>>(
-            FlatQuadShape({0.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f}, {2.0f, 2.0f, 0.0f}, {0.0f, 2.0f, 0.0f}, {0.0f, 0.0f, 400.0f}, engine.context().dt),
+            FlatQuadShape({0.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f}, {2.0f, 2.0f, 0.0f}, {0.0f, 2.0f, 0.0f}, engine.context().dt),
             Vector3{0.0f, 0.0f, 400.0f},
             MaxwellBoltzmannDistribution(300.0)
         )

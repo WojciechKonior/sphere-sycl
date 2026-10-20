@@ -77,7 +77,7 @@ TEST_F(SurfaceSourceStrategyTest, MultiShapeSurfaceAreaValidation) {
     for (const auto& tc : test_cases) {
         SCOPED_TRACE("Testing shape: " + tc.name);
 
-        FlatQuadShape quad(tc.p0, tc.p1, tc.p2, tc.p3, tc.velocity, tc.dt);
+        FlatQuadShape quad(tc.p0, tc.p1, tc.p2, tc.p3, tc.dt);
         SurfaceSourceStrategy<FlatQuadShape, MaxwellBoltzmannDistribution> surface_strategy(
             quad,
             tc.velocity,
@@ -126,7 +126,7 @@ TEST_F(SurfaceSourceStrategyTest, MultiVelocityCharacteristicVelocityValidation)
     FlatQuadShape quad(
         {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, 
         {1.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, 
-        {0.0f, 0.0f, 100.0f}, 0.01
+        0.01
     );
 
     for (const auto& tc : test_cases) {
@@ -209,7 +209,7 @@ TEST_F(SurfaceSourceStrategyTest, ComputeMacroParticlesToInjectValidation) {
         ctx.dt = tc.dt;
 
         // 1. Inicjalizacja kształtu i strategii
-        FlatQuadShape quad(tc.p0, tc.p1, tc.p2, tc.p3, tc.velocity, tc.dt);
+        FlatQuadShape quad(tc.p0, tc.p1, tc.p2, tc.p3, tc.dt);
         SurfaceSourceStrategy<FlatQuadShape, MaxwellBoltzmannDistribution> surface_strategy(
             quad,
             tc.velocity,
@@ -261,7 +261,7 @@ TEST_F(SurfaceSourceStrategyTest, DeviceInitializeParticlesValidationForElectron
     double dt = 1.0e-5;
     double temperature = 10.0;
     
-    FlatQuadShape quad(p0, p1, p2, p3, mean_velocity, dt);
+    FlatQuadShape quad(p0, p1, p2, p3,dt);
     SurfaceSourceStrategy<FlatQuadShape, MaxwellBoltzmannDistribution> strategy(
         quad,
         mean_velocity,
@@ -432,7 +432,7 @@ TEST_F(SurfaceSourceStrategyTest, DeviceInitializeParticlesValidationForHydrogen
     double dt = 1.0e-5;
     double temperature = 300.0; // Standardowa temperatura 300 K dla jonów
     
-    FlatQuadShape quad(p0, p1, p2, p3, mean_velocity, dt);
+    FlatQuadShape quad(p0, p1, p2, p3, dt);
     SurfaceSourceStrategy<FlatQuadShape, MaxwellBoltzmannDistribution> strategy(
         quad,
         mean_velocity,

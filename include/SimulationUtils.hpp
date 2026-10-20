@@ -62,6 +62,15 @@ namespace SimulationUtils {
         float y = 0.0f;
         float z = 0.0f;
     };
+
+    inline Vector3 compute_effective_normal(Vector3 velocity, Vector3 raw_normal){
+        Vector3 effective_normal = raw_normal;
+        float dot = velocity.x * raw_normal.x + velocity.y * raw_normal.y + velocity.z * raw_normal.z;
+        if(dot < 0.0f) {
+            effective_normal = {-raw_normal.x, -raw_normal.y, -raw_normal.z};
+        }
+        return effective_normal;
+    }
 }
 
 using namespace SimulationUtils;

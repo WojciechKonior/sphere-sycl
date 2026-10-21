@@ -8,9 +8,9 @@
 #include "SimulationSteps/ParticlePusherStep.hpp"
 #include "SimulationSteps/ParticleColliderStep.hpp"
 #include "SimulationSteps/ParticleInjectorStrategy/PointSourceStrategy.hpp"
-#include "SimulationSteps/ParticleInjectorStrategy/BeamSourceStrategy.hpp"
 #include "SimulationSteps/ParticleInjectorStrategy/FlatQuadeShape.hpp"
 #include "SimulationSteps/ParticleInjectorStrategy/SurfaceSourceStrategy.hpp"
+#include "Field/ElectromagneticField.hpp"
 
 int main() {
     sycl::queue q;
@@ -35,19 +35,6 @@ int main() {
         )
     );
 
-    // 2. Dodanie źródła strumieniowego (Beam / Ściana) o dużym promieniu tarczy (np. ściana)
-    engine.add_step<ParticleInjectorStep>(
-        SpeciesID::HYDROGEN_ION, 
-        5.0e17 /* n */, 
-        std::make_unique<BeamSourceStrategy<MaxwellBoltzmannDistribution>>(
-            Vector3{0.0f, 0.0f, -1.0f} /* center */, 
-            Vector3{0.0f, 0.0f, 5000.0f} /* velocity dir */, 
-            0.5 /* beam_radius / ściana */, 
-            1000.0,
-            MaxwellBoltzmannDistribution(1000.0)
-        )
-    );
-
     engine.add_step<ParticleInjectorStep>(
         SpeciesID::ELECTRON,
         1.0e18 /* n */,
@@ -60,7 +47,7 @@ int main() {
 
     engine.add_step<ChargeDepositionStep>();
     engine.add_step<FieldSolverStep>();
-    engine.add_step<ParticlePusherStep>();
+    engine.add_step<ParticlePusherStep<BorisPusherStrategy>>();
     engine.add_step<ParticleColliderStep>();
 
     // 5. Uruchomienie symulacji

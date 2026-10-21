@@ -17,6 +17,8 @@ private:
 
     /**
      * @brief Helper function to compute and validate the normal vector from 4 vertices.
+     * @param p0, p1, p2, p3 Four vertices defining the quad.
+     * @return Computed unit normal vector.
      * @throws std::runtime_error if points are not coplanar or form a degenerate shape.
      */
     static Vector3 calculate_normal(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3) {
@@ -42,7 +44,11 @@ private:
         return {cross_x / len, cross_y / len, cross_z / len};
     }
 
-    /// @brief Helper to compute a single triangle area in 3D.
+    /**
+     * @brief Helper to compute a single triangle area in 3D.
+     * @param a, b, c Vertices of the triangle.
+     * @return Surface area of the triangle [m^2].
+     */
     static float compute_triangle_area(Vector3 a, Vector3 b, Vector3 c) {
         float abx = b.x - a.x, aby = b.y - a.y, abz = b.z - a.z;
         float acx = c.x - a.x, acy = c.y - a.y, acz = c.z - a.z;
@@ -54,29 +60,35 @@ private:
 
 public:
     /**
-     * @brief Constructor initializing the flat quad from 4 vertices, full velocity vector, and dt.
-     * @param p0, p1, p2, p3 Four vertices of the quadrilateral.
-     * @param velocity Full 3D flow velocity vector [m/s].
-     * @param dt Simulation timestep [s].
+     * @brief Constructs a pure geometry flat quad from 4 vertices.
+     * @param p0 First vertex.
+     * @param p1 Second vertex.
+     * @param p2 Third vertex.
+     * @param p3 Fourth vertex.
      */
     FlatQuadShape(Vector3 p0, Vector3 p1, Vector3 p2, Vector3 p3, double dt)
         : p0_(p0), p1_(p1), p2_(p2), p3_(p3),
           normal_(calculate_normal(p0, p1, p2, p3)) {}
 
     /**
-     * @brief Publiczna metoda dopasowująca orientację i wierzchołki do wektora prędkości.
+     * @brief Aligns the quad's orientation and winding order to match the flow velocity vector.
+     * 
+     * If the normal points against the flow velocity vector (dot product < 0), 
+     * vertices p1 and p3 are swapped and the normal is inverted.
+     * 
+     * @param velocity 3D flow velocity vector [m/s].
      */
     void orient_towards_velocity(const Vector3 &velocity) {
         float dot_product = velocity.x * normal_.x + velocity.y * normal_.y + velocity.z * normal_.z;
         if (dot_product < 0.0f) {
             std::swap(p1_, p3_);
-            // normal_ = {-normal_.x, -normal_.y, -normal_.z};
             normal_ = calculate_normal(p0_, p1_, p2_, p3_);
         }
     }
 
     /**
      * @brief Computes the total surface area dynamically by decomposing into two triangles.
+     * @return Total surface area [m^2].
      */
     double compute_area() const {
         float area_1 = compute_triangle_area(p0_, p1_, p2_);
@@ -86,6 +98,7 @@ public:
 
     /**
      * @brief Separate getter for area.
+     * @return Total surface area [m^2].
      */
     double get_area() const {
         return compute_area();
@@ -93,6 +106,11 @@ public:
 
     /**
      * @brief Generates a random position on the device within the planar quad layer.
+     * 
+     * @param seed_idx Unique seed index per particle.
+     * @param thickness Injection layer thickness [m].
+     * @param normal Inward normal vector defining the injection depth direction.
+     * @return Generated 3D Cartesian position vector.
      */
     inline Vector3 device_generate_position(uint64_t seed_idx, float thickness, Vector3 normal) const {
         float xi_tri = SimulationUtils::pcg_random_float(seed_idx, 1);
@@ -134,6 +152,7 @@ public:
 
     /**
      * @brief Returns the inward normal vector.
+     * @return Current unit normal vector.
      */
     inline Vector3 device_get_inward_normal() const {
         return normal_;

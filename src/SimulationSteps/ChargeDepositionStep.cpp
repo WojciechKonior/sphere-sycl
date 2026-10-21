@@ -3,7 +3,7 @@
 sycl::event ChargeDepositionStep::execute(SimulationContext &ctx, sycl::event dependency)
 {
     // Wywołujemy zdefiniowane w GridField reset_charge_density(q)
-    ctx.grid.reset_charge_density(ctx.queue);
+    // ctx.grid.reset_charge_density(ctx.queue);
 
     std::vector<sycl::event> deposition_events;
 

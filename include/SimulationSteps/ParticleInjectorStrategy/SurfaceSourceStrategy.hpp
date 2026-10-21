@@ -6,10 +6,14 @@
 #include "SimulationSteps/ParticleInjectorStrategy/FlatQuadeShape.hpp"
 
 /**
- * @brief Surface injection source strategy utilizing a planar quadrilateral shape.
+ * @class SurfaceSourceStrategy
+ * @brief Surface injection source strategy utilizing a generic shape policy (e.g., planar quadrilateral).
  * 
- * Generates particles within a thin flat quad volume layer defined by surface geometry
- * and flow velocity over a timestep dt, with thermal velocity spreading.
+ * Generates particles within a thin surface volume layer defined by geometry boundaries
+ * and flow velocity over a timestep dt, incorporating thermal velocity spreading.
+ * 
+ * @tparam ShapePolicy Geometry policy defining the surface shape (e.g., FlatQuadShape).
+ * @tparam VelocityDistributionPolicy Policy governing thermal spreading (e.g., MaxwellBoltzmannDistribution).
  */
 template <typename ShapePolicy, typename VelocityDistributionPolicy = MaxwellBoltzmannDistribution>
 class SurfaceSourceStrategy : public IParticleInjectorStrategy {
@@ -20,20 +24,29 @@ private:
 
 public:
     /**
-     * @brief Constructor for SurfaceSourceStrategy.
-     * @param shape Pre-configured FlatQuadShape instance.
-     * @param velocity Magnitude of the mean injection velocity [m/s].
-     * @param dist_policy Velocity distribution policy (e.g., MaxwellBoltzmannDistribution).
+     * @brief Constructs a SurfaceSourceStrategy.
+     * 
+     * @param shape Pre-configured shape instance (e.g., FlatQuadShape).
+     * @param velocity 3D flow velocity vector [m/s].
+     * @param dist_policy Velocity distribution policy object.
      */
     SurfaceSourceStrategy(FlatQuadShape shape, Vector3 velocity, VelocityDistributionPolicy dist_policy = {})
         : shape_(shape), velocity_(velocity), velocity_distribution_(dist_policy) {
             shape_.orient_towards_velocity(velocity_);
         }
 
+    /**
+     * @brief Computes the total surface area of the injection boundary.
+     * @return Surface area [m^2].
+     */
     double get_surface_area() const override {
         return shape_.get_area();
     }
 
+    /**
+     * @brief Returns the characteristic velocity magnitude of the source.
+     * @return Speed magnitude [m/s].
+     */
     double get_characteristic_velocity() const override {
         // Zwracamy wielkość (moduł) wektora prędkości do obliczeń strumienia makrocząstek
         return std::sqrt(velocity_.x * velocity_.x + 
@@ -41,6 +54,17 @@ public:
                          velocity_.z * velocity_.z);
     }
 
+    /**
+     * @brief Computes the number of macro-particles to inject for the current time step.
+     * 
+     * Evaluates the physical particle flux through the surface: N = n * v_mean * area * dt,
+     * and scales it by the species macro-particle weight.
+     * 
+     * @param ctx Shared runtime simulation context.
+     * @param species_id Identifier of the particle species being injected.
+     * @param number_density Target physical number density [m^-3].
+     * @return Number of macro-particles to create in the current step.
+     */
     size_t compute_macro_particles_to_inject(const SimulationContext &ctx, SpeciesID species_id, double number_density) const override {
         const auto &traits = ctx.species_registry.get(species_id);
         double dt = static_cast<double>(ctx.dt);
@@ -54,6 +78,13 @@ public:
         return static_cast<size_t>(std::lround(macro_particles_to_inject));
     }
 
+    /**
+     * @brief Submits the SYCL kernel to initialize injected particle positions and velocities on the device.
+     * 
+     * @param handle Segment handle pointing to particle storage buffers for the current chunk.
+     * @param params Global injection parameters (timestamps, masses, global offsets, etc.).
+     * @param cgh SYCL command group handler for kernel submission.
+     */
     void device_initialize_particles(const SegmentHandle &handle, const InjectionParameters &params, sycl::handler &cgh) const override {
         // Wyciągamy wskaźniki uwzględniając lokalny offset chunku
         float *d_px = handle.px + handle.offset;
@@ -102,14 +133,22 @@ public:
 
 private:
     /**
-     * @brief Generates injection velocity based on the 3D mean velocity vector with thermal spreading.
+     * @brief Generates injection velocity based on the 3D mean velocity vector with thermal spreading on the device.
+     * 
+     * @param seed_idx Unique seed index per particle.
+     * @param velocity 3D flow velocity vector [m/s].
+     * @param particle_mass Mass of a single physical particle [kg].
+     * @param position 3D Cartesian position of the generated particle (unused in uniform flow).
+     * @param shape Shape policy reference (unused).
+     * @param distribution_policy Velocity distribution policy instance.
+     * @return Generated 3D velocity vector [m/s].
      */
     static inline Vector3 device_generate_velocity(
         uint64_t seed_idx, 
         Vector3 velocity, 
         double particle_mass, 
-        Vector3 /*position*/, 
-        const ShapePolicy & /*shape*/, 
+        Vector3, 
+        const ShapePolicy & , 
         VelocityDistributionPolicy distribution_policy
     ) {
         float vx_base = static_cast<float>(velocity.x);

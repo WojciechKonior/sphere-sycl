@@ -19,18 +19,40 @@ private:
     VelocityDistributionPolicy velocity_distribution_;
 
 public:
+    /**
+     * @brief Constructs a PointSourceStrategy.
+     * 
+     * @param center Central coordinates of the injection source.
+     * @param mean_velocity Mean radial velocity of injected particles [m/s].
+     * @param sphere_radius Inner radius of the shell (R1). If 0.0, acts as a volumetric point source.
+     * @param dist_policy Velocity distribution policy object.
+     */
     PointSourceStrategy(Vector3 center, double mean_velocity, double sphere_radius, VelocityDistributionPolicy dist_policy = {})
         : center_(center), mean_velocity_(mean_velocity), sphere_radius_(sphere_radius), velocity_distribution_(dist_policy) {}
 
+    /// @brief Computes the surface area of the injection boundary.
     double get_surface_area() const override {
         if (sphere_radius_ > 0.0) return 4.0 * Constants::PI * sphere_radius_ * sphere_radius_;
         return 0.0; 
     }
 
+    /// @brief Returns the characteristic velocity of the source.
     double get_characteristic_velocity() const override {
         return mean_velocity_;
     }
 
+    /**
+     * @brief Calculates the number of macro-particles to inject in the current timestep.
+     * 
+     * Handles two distinct cases:
+     * - Case 1 (Surface/Shell, R1 > 0): Flux-based injection through the sphere surface.
+     * - Case 2 (Volumetric point source, R1 = 0): Volume-filling injection inside the sphere of radius R2 = v_mean * dt.
+     * 
+     * @param ctx Shared runtime simulation context.
+     * @param species_id Identifier of the particle species being injected.
+     * @param number_density Target physical number density [m^-3].
+     * @return Number of macro-particles to create.
+     */
     size_t compute_macro_particles_to_inject(const SimulationContext &ctx, SpeciesID species_id, double number_density) const override {
         const auto &traits = ctx.species_registry.get(species_id);
         double dt = static_cast<double>(ctx.dt);
@@ -55,6 +77,13 @@ public:
         return static_cast<size_t>(std::lround(macro_particles_to_inject)); // lub std::lround
     }
 
+    /**
+     * @brief Submits the SYCL kernel to initialize injected particle positions and velocities on the device.
+     * 
+     * @param handle Segment handle pointing to particle storage buffers for the current chunk.
+     * @param params Injection parameters including global offsets, masses, and timestamps.
+     * @param cgh SYCL command group handler for kernel submission.
+     */
     void device_initialize_particles(const SegmentHandle &handle, const InjectionParameters &params, sycl::handler &cgh) const override {
         // Wyciągamy wskaźniki uwzględniając lokalny offset chunku
         float *d_px = handle.px + handle.offset;
@@ -94,6 +123,15 @@ public:
         });
     }
 
+    /**
+     * @brief Generates a random position on the device within a spherical shell or solid sphere.
+     * 
+     * @param seed_idx Unique seed index per particle (derived from global particle index).
+     * @param R1 Inner radius of the shell [m].
+     * @param R2 Outer radius of the shell or sphere [m].
+     * @param center Central point coordinates of the source.
+     * @return Generated 3D Cartesian position vector.
+     */
     static inline Vector3 device_generate_position(uint64_t seed_idx, double R1, double R2, Vector3 center) {
         // 1. Generowanie liczb losowych za pomocą PCG Hash
         float xi1 = SimulationUtils::pcg_random_float(seed_idx, 1); // Do promienia
@@ -127,7 +165,18 @@ public:
 
         return {px, py, pz};
     }
-
+    
+    /**
+     * @brief Generates initial velocity vector with thermal spreading on the device.
+     * 
+     * @param seed_idx Unique seed index per particle.
+     * @param mean_radial_velocity Mean radial drift velocity magnitude [m/s].
+     * @param particle_mass Mass of a single physical particle [kg].
+     * @param position 3D Cartesian position of the generated particle.
+     * @param center Central point coordinates of the source.
+     * @param distribution_policy Velocity distribution policy instance.
+     * @return Generated 3D velocity vector [m/s].
+     */
     static inline Vector3 device_generate_velocity(uint64_t seed_idx, double mean_radial_velocity, double particle_mass, Vector3 position, Vector3 center, VelocityDistributionPolicy distribution_policy) {
         float dx = position.x - static_cast<float>(center.x);
         float dy = position.y - static_cast<float>(center.y);

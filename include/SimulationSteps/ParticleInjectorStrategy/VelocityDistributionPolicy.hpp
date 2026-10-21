@@ -14,10 +14,24 @@
 struct MaxwellBoltzmannDistribution {
     double temperature; ///< Temperature of the species in Kelvin [K].
 
-    /// @brief Constructs a Maxwell-Boltzmann velocity distribution.
+    /**
+     * @brief Constructs a Maxwell-Boltzmann velocity distribution policy.
+     * @param temp Temperature of the species [K].
+     */
     explicit MaxwellBoltzmannDistribution(double temp) : temperature(temp) {}
 
-    /// @brief Applies thermal velocity offsets to the base velocities on the GPU device.
+    /**
+     * @brief Applies thermal velocity offsets to the base velocities on the GPU device.
+     * 
+     * Uses independent uniform random numbers in [0, 1) fetched via dedicated PCG salts (4 to 7)
+     * and applies the Box-Muller transform to generate 3D thermal velocity perturbations.
+     * 
+     * @param seed_idx Unique seed index per particle.
+     * @param vx_base In/out base X velocity component [m/s].
+     * @param vy_base In/out base Y velocity component [m/s].
+     * @param vz_base In/out base Z velocity component [m/s].
+     * @param particle_mass Mass of a single physical particle [kg].
+     */
     void apply(uint64_t seed_idx, float &vx_base, float &vy_base, float &vz_base, double particle_mass) const {
         if (temperature <= 0.0 || particle_mass <= 0.0) {
             return;

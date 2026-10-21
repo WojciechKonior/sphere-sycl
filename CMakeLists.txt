@@ -77,12 +77,13 @@ endif()
 
 # 1. Deklaracja plików nagłówkowych (dla IDE)
 set(HEADERS
-    include/SimulationSteps/ParticleInjectorStrategy/BeamSourceStrategy.hpp
+    include/Field/ElectromagneticField.hpp
     include/SimulationSteps/ParticleInjectorStrategy/FlatQuadeShape.hpp
     include/SimulationSteps/ParticleInjectorStrategy/IParticleInjectorStrategy.hpp
     include/SimulationSteps/ParticleInjectorStrategy/PointSourceStrategy.hpp
     include/SimulationSteps/ParticleInjectorStrategy/IParticleInjectorStrategy.hpp
     include/SimulationSteps/ParticleInjectorStrategy/VelocityDistributionPolicy.hpp
+    include/SimulationSteps/PusherStrategy/BorisPusherStrategy.hpp
     include/SimulationSteps/ChargeDepositionStep.hpp
     include/SimulationSteps/FieldSolverStep.hpp
     include/SimulationSteps/ISimulationStep.hpp
@@ -103,9 +104,7 @@ set(CORE_SOURCES
     src/SimulationSteps/FieldSolverStep.cpp
     src/SimulationSteps/ParticleColliderStep.cpp
     src/SimulationSteps/ParticleInjectorStep.cpp
-    src/SimulationSteps/ParticlePusherStep.cpp
     src/Chunk.cpp
-    src/GridField.cpp
     src/ParticleStorage.cpp
     src/SimulationEngine.cpp
     src/Species.cpp

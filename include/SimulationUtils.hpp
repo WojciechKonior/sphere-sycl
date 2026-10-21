@@ -23,6 +23,7 @@ namespace SimulationUtils {
         constexpr double CHARGE_HYDROGEN_ION     =  CHARGE_ELEMENTARY;
         constexpr double CHARGE_NEUTRAL          =  0.0f;
         constexpr double k_B                     = 1.380649e-23; // Boltzmann constant
+        constexpr double c                       = 2.99792458e8; // spped of light
 
         // mathematical constants
         constexpr double PI                      = 3.14159265358979323846;

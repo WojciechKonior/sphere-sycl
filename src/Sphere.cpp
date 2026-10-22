@@ -47,7 +47,7 @@ int main() {
 
     engine.add_step<ChargeDepositionStep>();
     engine.add_step<FieldSolverStep>();
-    engine.add_step<ParticlePusherStep<BorisPusherStrategy>>();
+    engine.add_step<ParticlePusherStep<BorisPusherStrategy<ElectromagneticField>>>();
     engine.add_step<ParticleColliderStep>();
 
     // 5. Uruchomienie symulacji

@@ -4,6 +4,7 @@
 #include "SimulationUtils.hpp"
 #include "GridField.hpp"
 #include "Field/ElectromagneticField.hpp"
+#include "Chunk.hpp"
 
 /**
  * @class BorisPusherStrategy
@@ -12,8 +13,8 @@
  * Implements the standard leapfrog-based Boris algorithm, separating electric field 
  * half-acceleration steps from full magnetic field rotations.
  */
-// template <typename FieldPolicy>
-using FieldPolicy = ElectromagneticField; // BorishPusherStrategy always operate in ElectromagneticField
+// using FieldPolicy = ElectromagneticField; // BorishPusherStrategy always operate in ElectromagneticField
+template <typename FieldPolicy>
 class BorisPusherStrategy {
 private:
     FieldPolicy field_policy_;
@@ -35,7 +36,7 @@ public:
         // Możemy przekazać odpowiednie akcesory z siatki, jeśli GridField je udostępnia
         // Na ten moment używamy uproszczonych wartości lub gotowych struktur na GPU
         auto field_policy = field_policy_;
-        auto grid_device_vew = grid.get_device_view();
+        auto grid_device_view = grid.get_device_view();
 
         cgh.parallel_for(sycl::range<1>(local_view.count), [=, dt = dt, q_over_m = q_over_m](sycl::id<1> idx) {
             size_t i = idx[0];
@@ -55,63 +56,76 @@ public:
             float Bx, By, Bz; // Przykładowe pole magnetyczne w osi Z
             field_policy.device_sample(x, y, z, Ex, Ey, Ez, Bx, By, Bz);
 
-            // --- POCZÁTEK ALGORITMU BORISA (Relatywistycznego) ---
             constexpr float c = static_cast<float>(Constants::c); // Prędkość światła [m/s]
             constexpr float c2 = c * c;
 
-            float vv = vx * vx + vy * vy + vz * vz;
-            
-            // Czynnik relatywistyczny t = (q / m) * (dt / 2) / gamma
-            float t = 0.0f;
-            if (vv < c2) {
-                float gamma_factor = sycl::sqrt(1.0f - vv / c2);
-                t = (q_over_m) * (dt * 0.5f) * gamma_factor;
+            // --- POCZÁTEK ALGORITMU BORISA (Relatywistycznego) ---
+            auto sub_steps = 2;
+            float sub_dt = dt / static_cast<float>(sub_steps);
+            // sub_dt = dt;
+            for(auto i = 0; i<sub_steps; i++)
+            {            
+                float vv = vx * vx + vy * vy + vz * vz;
+                
+                // Czynnik relatywistyczny t = (q / m) * (sub_dt / 2) / gamma
+                float t = 0.0f;
+                if (vv < c2) {
+                    float gamma2 = 1.0f - vv / c2;
+                    float one_over_gamma_factor = sycl::sqrt(sycl::fmax(0.0f, gamma2));
+                    t = (q_over_m) * (sub_dt * 0.5f) * one_over_gamma_factor;
+                }
+
+                // Wektor w = t * E (uproszczony dla czystego pola E, pełny relatywistyczny uwzględnia (v x E))
+                float wx = t * Ex;
+                float wy = t * Ey;
+                float wz = t * Ez;
+
+                // Prędkość pośrednia u^- = v + w
+                float ux = vx + wx;
+                float uy = vy + wy;
+                float uz = vz + wz;
+
+                // Wektor h = t * B
+                float hx = t * Bx;
+                float hy = t * By;
+                float hz = t * Bz;
+
+                // s = 2h / (1 + h*h)
+                float h2 = hx * hx + hy * hy + hz * hz;
+                float s_denom = 2.0f / (1.0f + h2);
+                float sx = hx * s_denom;
+                float sy = hy * s_denom;
+                float sz = hz * s_denom;
+
+                // Rotacja: u' = u^- + (u^- x h)
+                float u_prim_x = ux + (uy * hz - uz * hy);
+                float u_prim_y = uy + (uz * hx - ux * hz);
+                float u_prim_z = uz + (ux * hy - uy * hx);
+
+                // Domknięcie rotacji: u^+ = u^- + (u' x s)
+                float u_plus_x = ux + (u_prim_y * sz - u_prim_z * sy);
+                float u_plus_y = uy + (u_prim_z * sx - u_prim_x * sz);
+                float u_plus_z = uz + (u_prim_x * sy - u_prim_y * sx);
+
+                // Nowa prędkość v = u^+ + w
+                vx = u_plus_x + wx;
+                vy = u_plus_y + wy;
+                vz = u_plus_z + wz;
+
+                float speed = sycl::sqrt(vx * vx + vy * vy + vz * vz);
+                if (speed >= c) {
+                    float scale = (c * 0.999999f) / speed;
+                    vx *= scale; vy *= scale; vz *= scale;
+                }
+
+                // 3. Aktualizacja pozycji: x_new = x + dt * v
+                x += sub_dt * vx;
+                y += sub_dt * vy;
+                z += sub_dt * vz;
             }
-
-            // Wektor w = t * E (uproszczony dla czystego pola E, pełny relatywistyczny uwzględnia (v x E))
-            float wx = t * Ex;
-            float wy = t * Ey;
-            float wz = t * Ez;
-
-            // Prędkość pośrednia u^- = v + w
-            float ux = vx + wx;
-            float uy = vy + wy;
-            float uz = vz + wz;
-
-            // Wektor h = t * B
-            float hx = t * Bx;
-            float hy = t * By;
-            float hz = t * Bz;
-
-            // s = 2h / (1 + h*h)
-            float h2 = hx * hx + hy * hy + hz * hz;
-            float s_denom = 2.0f / (1.0f + h2);
-            float sx = hx * s_denom;
-            float sy = hy * s_denom;
-            float sz = hz * s_denom;
-
-            // Rotacja: u' = u^- + (u^- x h)
-            float u_prim_x = ux + (uy * hz - uz * hy);
-            float u_prim_y = uy + (uz * hx - ux * hz);
-            float u_prim_z = uz + (ux * hy - uy * hx);
-
-            // Domknięcie rotacji: u^+ = u^- + (u' x s)
-            float u_plus_x = ux + (u_prim_y * sz - u_prim_z * sy);
-            float u_plus_y = uy + (u_prim_z * sx - u_prim_x * sz);
-            float u_plus_z = uz + (u_prim_x * sy - u_prim_y * sx);
-
-            // Nowa prędkość v = u^+ + w
-            vx = u_plus_x + wx;
-            vy = u_plus_y + wy;
-            vz = u_plus_z + wz;
-
-            // 3. Aktualizacja pozycji: x_new = x + dt * v
-            x += dt * vx;
-            y += dt * vy;
-            z += dt * vz;
             // --- KONIEC ALGORITMU BORISA ---
 
-            bool is_out = grid_device_vew.device_out_of_boundary_check(x, y, z);
+            bool is_out = grid_device_view.device_out_of_boundary_check(x, y, z);
             if(is_out){
                 local_view.device_mark_for_removal(i);
             }
@@ -125,5 +139,13 @@ public:
             local_view.vy[i] = vy;
             local_view.vz[i] = vz;
         });
+    }
+
+    /**
+     * @brief Retrieves a constant reference to the underlying field policy.
+     * @return Const reference to the FieldPolicy object.
+     */
+    const FieldPolicy& get_field_policy() const {
+        return field_policy_;
     }
 };

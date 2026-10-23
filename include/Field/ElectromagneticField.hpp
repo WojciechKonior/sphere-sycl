@@ -6,9 +6,9 @@ struct ElectromagneticField {
     /**
      * @brief Funkcja wywoływana bezpośrednio w kernelu GPU do samplowania pól w punkcie (x, y, z).
      */
-    inline void device_sample(float x, float y, float z, float &Ex, float &Ey, float &Ez, float &Bx, float &By, float &Bz) const {
+    inline void device_sample(Vector3 pos, Vector3& E, Vector3& B) const {
         // Docelowo: interpolacja z węzłów siatki FDTD (np. Yee lattice)
-        Ex = 0.0f; Ey = 0.0f; Ez = 0.0f;
-        Bx = 0.0f; By = 0.0f; Bz = 1.0f; // Przykładowe stałe pole magnetyczne w osi Z
+        E.x = 0.0f; E.y = 0.0f; E.z = 0.0f;
+        B.x = 0.0f; B.y = 0.0f; B.z = 1.0f; // Przykładowe stałe pole magnetyczne w osi Z
     }
 };

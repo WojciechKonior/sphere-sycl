@@ -34,9 +34,9 @@ struct MockElectromagneticField {
     float Ex_val = 0.0f, Ey_val = 0.0f, Ez_val = 0.0f;
     float Bx_val = 0.0f, By_val = 0.0f, Bz_val = 0.0f;
 
-    inline void device_sample(float, float, float, float &Ex, float &Ey, float &Ez, float &Bx, float &By, float &Bz) const {
-        Ex = Ex_val; Ey = Ey_val; Ez = Ez_val;
-        Bx = Bx_val; By = By_val; Bz = Bz_val;
+    inline void device_sample(Vector3 pos, Vector3& E, Vector3& B) const {
+        E.x = Ex_val; E.y = Ey_val; E.z = Ez_val;
+        B.x = Bx_val; B.y = By_val; B.z = Bz_val;
     }
 };
 
@@ -315,6 +315,7 @@ TEST_F(BorisPusherStrategyTest, ElectronElectricFieldRelativisticAccelerationHis
     constexpr float q_e = static_cast<float>(Constants::CHARGE_ELECTRON);
     constexpr float m_e = static_cast<float>(Constants::MASS_ELECTRON);
     constexpr float c   = static_cast<float>(Constants::c);
+    constexpr float c2  = c * c;
     float q_over_m = q_e / m_e;
 
     // Uniform electric field along X-axis [V/m]
@@ -404,6 +405,8 @@ TEST_F(BorisPusherStrategyTest, ElectronElectricFieldRelativisticAccelerationHis
 
     // 7. RIGOROUS VALIDATION OF EVERY SINGLE STEP ON HOST
     float prev_vx = 0.0f;
+    float prev_ux = 0.0f;
+
     for (int step = 0; step < num_steps; ++step) {
         float px = h_history_px[step];
         float py = h_history_py[step];
@@ -421,14 +424,26 @@ TEST_F(BorisPusherStrategyTest, ElectronElectricFieldRelativisticAccelerationHis
         // B. Assert velocity strictly remains below the speed of light at every step
         EXPECT_LT(std::abs(vx), c);
 
-        // C. Assert continuous acceleration (velocity in X must monotonically increase in a uniform E field)
+        // C. Obliczenie pędu właściwego u_x oraz czynnika gamma dla bieżącego kroku
+        float vv = vx * vx;
+        float gamma = 1.0f / std::sqrt(std::max(0.0f, 1.0f - vv / c2));
+        float curr_ux = gamma * vx;
+
+        // D. Walidacja monotoniczności prędkości z tolerancją na szum float blisko c
         if (step > 0) {
-            EXPECT_GE(vx, prev_vx);
+            // Tolerancja 50 km/s na samych krańcach relatywistycznych (szum mantysy float)
+            EXPECT_GE(vx, prev_vx - 50000.0f);
+
+            // E. Kluczowa, bezwzględna asercja monotoniczności w przestrzeni PĘDU WŁAŚCIWEGO (u_x)
+            // Pęd właściwy w stałym polu elektrycznym musi rosnąć bezwzględnie monotonicznie!
+            EXPECT_GE(curr_ux, prev_ux);
         }
+
         prev_vx = vx;
+        prev_ux = curr_ux;
     }
 
-    // D. Final velocity check: ensure it successfully reached the intended relativistic fraction (~0.5c)
+    // D. Final velocity check: ensure it successfully reached the intended relativistic fraction (~0.3c+)
     float final_vx = h_history_vx.back();
     EXPECT_GT(std::abs(final_vx), 0.3f * c);
     EXPECT_LT(std::abs(final_vx), c);

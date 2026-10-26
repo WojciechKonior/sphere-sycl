@@ -2,6 +2,7 @@
 #include <sycl/sycl.hpp>
 #include <cstdint>
 #include <cstddef>
+#include <concepts>
 #include "Species.hpp"
 
 class ParticleStorage;
@@ -58,11 +59,44 @@ namespace SimulationUtils {
     };
     
     /// @brief Simple 3D vector structure for spatial positions and velocity directions.
-    struct Vector3 {
-        float x = 0.0f;
-        float y = 0.0f;
-        float z = 0.0f;
+    template <typename T>
+    requires std::floating_point<T>
+    struct Vec3 {
+        T x = 0.0f;
+        T y = 0.0f;
+        T z = 0.0f;
+
+        /// @brief Computes the dot product of two Vec3 instances.
+        static inline T dot(const Vec3& a, const Vec3& b) {
+            return a.x * b.x + a.y * b.y + a.z * b.z;
+        }
+
+        /// @brief Statically adds two vectors together.
+        static inline Vec3 add(const Vec3& a, const Vec3& b) {
+            return {a.x + b.x, a.y + b.y, a.z + b.z};
+        }
+
+        /// @brief Statically subtracts two vectors together.
+        static inline Vec3 sub(const Vec3& a, const Vec3& b) {
+            return {a.x - b.x, a.y - b.y, a.z - b.z};
+        }
+
+        /// @brief Computes the cross product of two Vec3 instances (a x b).
+        static inline Vec3 cross(const Vec3& a, const Vec3& b) {
+            return {
+                a.y * b.z - a.z * b.y,
+                a.z * b.x - a.x * b.z,
+                a.x * b.y - a.y * b.x
+            };
+        }
+    
+        /// @brief Multiplies a vector by a scalar value (v * scalar).
+        static inline Vec3 scale(const Vec3& v, T scalar) {
+            return {v.x * scalar, v.y * scalar, v.z * scalar};
+        }
     };
+
+    using Vector3 = Vec3<float>;
 
     inline Vector3 compute_effective_normal(Vector3 velocity, Vector3 raw_normal){
         Vector3 effective_normal = raw_normal;
@@ -75,3 +109,5 @@ namespace SimulationUtils {
 }
 
 using namespace SimulationUtils;
+using Vector3 = SimulationUtils::Vec3<float>;
+using Vector3d = SimulationUtils::Vec3<double>;

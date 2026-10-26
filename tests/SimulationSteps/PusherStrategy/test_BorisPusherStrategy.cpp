@@ -359,7 +359,7 @@ TEST_F(BorisPusherStrategyTest, ElectronElectricFieldRelativisticAccelerationHis
     for (int step = 0; step < num_steps; ++step) {
         queue_.submit([&](sycl::handler &cgh) {
             pusher.push(view, dt, q_over_m, reinterpret_cast<GridField&>(mock_grid), cgh);
-        });
+        }).wait();
 
         queue_.submit([&](sycl::handler &cgh) {
             auto px_ptr = view.px;
@@ -384,9 +384,8 @@ TEST_F(BorisPusherStrategyTest, ElectronElectricFieldRelativisticAccelerationHis
                 h_vy_buf[step] = vy_ptr[0];
                 h_vz_buf[step] = vz_ptr[0];
             });
-        });
+        }).wait();
     }
-    queue_.wait();
 
     // 6. Copy history buffers from device to host
     std::vector<float> h_history_px(num_steps);

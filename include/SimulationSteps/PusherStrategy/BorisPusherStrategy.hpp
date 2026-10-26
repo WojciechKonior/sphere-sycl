@@ -40,46 +40,17 @@ public:
         auto grid_device_view = grid.get_device_view();
 
         cgh.parallel_for(sycl::range<1>(local_view.count), [=, dt = dt, q_over_m = q_over_m](sycl::id<1> idx) {
+            using Float = double;
+            using Vector3 = Vec3<Float>;
+            
             size_t i = idx[0];
 
-            // Vector3 pos{local_view.px[i], local_view.py[i], local_view.pz[i]};
-            // Vector3 vel{local_view.vx[i], local_view.vy[i], local_view.vz[i]};
-            // device_boris_algorithm<float>(pos, vel, dt, q_over_m, field_policy);
-
-            // bool is_out = grid_device_view.device_out_of_boundary_check(pos.x, pos.y, pos.z);
-            // if(is_out){ local_view.device_mark_for_removal(i); }
-
-            // // Zapis zaktualizowanych danych z powrotem do buforów SoA
-            // local_view.px[i] = pos.x;
-            // local_view.py[i] = pos.y;
-            // local_view.pz[i] = pos.z;
-
-            // local_view.vx[i] = vel.x;
-            // local_view.vy[i] = vel.y;
-            // local_view.vz[i] = vel.z;
-
-            Vec3<double> pos = {
-                static_cast<double>(local_view.px[i]),
-                static_cast<double>(local_view.py[i]),
-                static_cast<double>(local_view.pz[i])
-            };
-            Vec3<double> vel = {
-                static_cast<double>(local_view.vx[i]),
-                static_cast<double>(local_view.vy[i]),
-                static_cast<double>(local_view.vz[i])
-            };
-            device_boris_algorithm<double>(pos, vel, static_cast<double>(dt), static_cast<double>(q_over_m), field_policy);
-
+            Vector3 vel, pos;
+            device_load_particle_data<Float>(local_view, i, pos, vel);
+            device_boris_algorithm<Float>(pos, vel, static_cast<Float>(dt), static_cast<Float>(q_over_m), field_policy);
             bool is_out = grid_device_view.device_out_of_boundary_check(pos.x, pos.y, pos.z);
             if(is_out){ local_view.device_mark_for_removal(i); }
-
-            local_view.px[i] = static_cast<float>(pos.x);
-            local_view.py[i] = static_cast<float>(pos.y);
-            local_view.pz[i] = static_cast<float>(pos.z);
-
-            local_view.vx[i] = static_cast<float>(vel.x);
-            local_view.vy[i] = static_cast<float>(vel.y);
-            local_view.vz[i] = static_cast<float>(vel.z);
+            device_store_particle_data<Float>(local_view, i, pos, vel);
         });
     }
 
@@ -129,6 +100,20 @@ public:
         return sycl::min(sub_steps, 32);
     }
 
+    /**
+     * @brief Executes the relativistic Boris particle pusher algorithm for a single particle.
+     * 
+     * This function performs adaptive sub-stepping based on magnetic cyclotron frequency 
+     * and electric field acceleration thresholds, updating the particle's position and velocity 
+     * vectors in-place using the specified floating-point precision.
+     * 
+     * @tparam Float Floating-point type (`float` or `double`) for high-precision calculations.
+     * @param pos Reference to the particle's 3D position vector (updated in-place).
+     * @param vel Reference to the particle's 3D velocity vector (updated in-place).
+     * @param dt Time step size [s].
+     * @param q_over_m Charge-to-mass ratio of the particle species [C/kg].
+     * @param field_policy Electromagnetic field policy instance used for sampling fields on the device.
+     */
     template <typename Float>
     requires std::floating_point<Float>
     static inline void device_boris_algorithm(Vec3<Float> &pos, Vec3<Float> &vel, Float dt, Float q_over_m, const FieldPolicy &field_policy) {
@@ -205,5 +190,53 @@ public:
         vel = Vec3::scale(u, static_cast<Float>(1.0) / gamma_final);
 
         // --- KONIEC ALGORITMU BORISA ---
+    }
+
+    /**
+     * @brief Loads particle position and velocity data from SoA buffers into a universal vector type.
+     * 
+     * @tparam Float Target floating-point precision type (`float` or `double`).
+     * @param local_view Structure of Array (SoA) chunk view containing particle data pointers.
+     * @param i Particle index within the chunk.
+     * @param pos Output parameter to store the loaded 3D position vector.
+     * @param vel Output parameter to store the loaded 3D velocity vector.
+     */
+    template <typename Float>
+    requires std::floating_point<Float>
+    static inline void device_load_particle_data(const ChunkSoAView &local_view, size_t i, Vec3<Float> &pos, Vec3<Float> &vel) {
+        pos = {
+            static_cast<Float>(local_view.px[i]),
+            static_cast<Float>(local_view.py[i]),
+            static_cast<Float>(local_view.pz[i])
+        };
+        vel = {
+            static_cast<Float>(local_view.vx[i]),
+            static_cast<Float>(local_view.vy[i]),
+            static_cast<Float>(local_view.vz[i])
+        };
+    }
+
+    /**
+     * @brief Stores updated particle position and velocity vectors back into the SoA buffers.
+     * 
+     * Converts high-precision vectors (`float` or `double`) back to the standard single-precision 
+     * format required by the persistent SoA storage buffers.
+     * 
+     * @tparam Float Current floating-point precision type used during calculations (`float` or `double`).
+     * @param local_view Structure of Array (SoA) chunk view containing target buffers.
+     * @param i Particle index within the chunk.
+     * @param pos Input 3D position vector to store.
+     * @param vel Input 3D velocity vector to store.
+     */
+    template <typename Float>
+    requires std::floating_point<Float>
+    static inline void device_store_particle_data(ChunkSoAView local_view, size_t i, const Vec3<Float> &pos, const Vec3<Float> &vel) {
+        local_view.px[i] = static_cast<float>(pos.x);
+        local_view.py[i] = static_cast<float>(pos.y);
+        local_view.pz[i] = static_cast<float>(pos.z);
+
+        local_view.vx[i] = static_cast<float>(vel.x);
+        local_view.vy[i] = static_cast<float>(vel.y);
+        local_view.vz[i] = static_cast<float>(vel.z);
     }
 };

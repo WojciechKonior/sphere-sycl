@@ -34,9 +34,15 @@ struct MockElectromagneticField {
     float Ex_val = 0.0f, Ey_val = 0.0f, Ez_val = 0.0f;
     float Bx_val = 0.0f, By_val = 0.0f, Bz_val = 0.0f;
 
-    inline void device_sample(Vector3 pos, Vector3& E, Vector3& B) const {
-        E.x = Ex_val; E.y = Ey_val; E.z = Ez_val;
-        B.x = Bx_val; B.y = By_val; B.z = Bz_val;
+    template <typename Float>
+    requires std::floating_point<Float>
+    inline void device_sample(Vec3<Float> pos, Vec3<Float>& E, Vec3<Float>& B) const {
+        E.x = static_cast<Float>(Ex_val); 
+        E.y = static_cast<Float>(Ey_val); 
+        E.z = static_cast<Float>(Ez_val);
+        B.x = static_cast<Float>(Bx_val); 
+        B.y = static_cast<Float>(By_val); 
+        B.z = static_cast<Float>(Bz_val);
     }
 };
 
@@ -217,13 +223,13 @@ TEST_F(BorisPusherStrategyTest, ElectronPerpendicularMagneticFieldHistoryBufferT
         cgh.host_task([=](sycl::interop_handle) {
             // Note: If running multiple steps, we submit kernel per step inside host task or sequential queue submissions
         });
-    });
+    }).wait();
 
     // Cleaner approach for sequential device submissions without host waits:
     for (int step = 0; step < num_steps; ++step) {
         queue_.submit([&](sycl::handler &cgh) {
             pusher.push(view, dt, q_over_m, reinterpret_cast<GridField&>(mock_grid), cgh);
-        });
+        }).wait();
 
         // Record current state into device history arrays
         queue_.submit([&](sycl::handler &cgh) {
@@ -249,9 +255,8 @@ TEST_F(BorisPusherStrategyTest, ElectronPerpendicularMagneticFieldHistoryBufferT
                 h_vy_buf[step] = vy_ptr[0];
                 h_vz_buf[step] = vz_ptr[0];
             });
-        });
+        }).wait();
     }
-    queue_.wait(); // Synchronize only once after the entire loop!
 
     // 6. Copy history buffers from device to host for batch verification
     std::vector<float> h_history_px(num_steps);
@@ -520,7 +525,7 @@ TEST_F(BorisPusherStrategyTest, ElectronExBDriftHistoryBufferTest) {
     for (int step = 0; step < num_steps; ++step) {
         queue_.submit([&](sycl::handler &cgh) {
             pusher.push(view, dt, q_over_m, reinterpret_cast<GridField&>(mock_grid), cgh);
-        });
+        }).wait();
 
         queue_.submit([&](sycl::handler &cgh) {
             auto px_ptr = view.px;
@@ -545,9 +550,8 @@ TEST_F(BorisPusherStrategyTest, ElectronExBDriftHistoryBufferTest) {
                 h_vy_buf[step] = vy_ptr[0];
                 h_vz_buf[step] = vz_ptr[0];
             });
-        });
+        }).wait();
     }
-    queue_.wait();
 
     // 6. Copy history buffers to host
     std::vector<float> h_history_px(num_steps);
@@ -599,4 +603,969 @@ TEST_F(BorisPusherStrategyTest, ElectronExBDriftHistoryBufferTest) {
     sycl::free(d_history_vx, queue_);
     sycl::free(d_history_vy, queue_);
     sycl::free(d_history_vz, queue_);
+}
+
+/**
+ * @brief Testuje ruch pojedynczego jonu wodoru wzdłuż pola magnetycznego (B_z) 
+ *        weryfikując każdy krok czasowy za pomocą bufora historii na GPU.
+ */
+TEST_F(BorisPusherStrategyTest, HydrogenIonParallelToMagneticFieldHistoryBufferTest) {
+    // 1. Konfiguracja fizyczna dla jonu wodoru
+    float dt = 1e-10f; // Czas kroków [s]
+    constexpr float q_ion = static_cast<float>(Constants::CHARGE_HYDROGEN_ION);
+    constexpr float m_ion = static_cast<float>(Constants::MASS_HYDROGEN_ION);
+    float q_over_m = q_ion / m_ion;
+
+    float vz0 = 5000.0f; // Prędkość początkowa w osi Z [m/s]
+    int num_steps = 100;
+
+    // 2. Przygotowanie chunku na 1 cząstkę
+    Chunk chunk(queue_, 1);
+    chunk.set_count(1);
+    ChunkSoAView view = chunk.get_view();
+
+    std::vector<float> h_px = {0.0f};
+    std::vector<float> h_py = {0.0f};
+    std::vector<float> h_pz = {0.0f};
+    std::vector<float> h_vx = {0.0f};
+    std::vector<float> h_vy = {0.0f};
+    std::vector<float> h_vz = {vz0};
+
+    queue_.memcpy(view.px, h_px.data(), sizeof(float)).wait();
+    queue_.memcpy(view.py, h_py.data(), sizeof(float)).wait();
+    queue_.memcpy(view.pz, h_pz.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vx, h_vx.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vy, h_vy.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vz, h_vz.data(), sizeof(float)).wait();
+
+    // 3. Alokacja buforów historii w pamięci VRAM urządzenia (GPU)
+    float* d_history_px = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_py = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_pz = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vx = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vy = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vz = sycl::malloc_device<float>(num_steps, queue_);
+
+    // 4. Konfiguracja Mock Field i strategii Borisa
+    MockGridField mock_grid(queue_);
+    BorisPusherStrategy<MockElectromagneticField> pusher;
+    auto pusher_view = reinterpret_cast<BorisPusherStrategyView*>(&pusher);
+    pusher_view->field_policy_ = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; // Pole magnetyczne/elektryczne zerowe lub współosiowe
+
+    // 5. Pętla symulacji na GPU z zapisem do bufora historii po każdym kroku
+    for (int step = 0; step < num_steps; ++step) {
+        queue_.submit([&](sycl::handler &cgh) {
+            pusher.push(view, dt, q_over_m, reinterpret_cast<GridField&>(mock_grid), cgh);
+        }).wait();
+
+        // Zapis stanu cząstki do tablicy historii na GPU
+        queue_.submit([&](sycl::handler &cgh) {
+            auto px_ptr = view.px;
+            auto py_ptr = view.py;
+            auto pz_ptr = view.pz;
+            auto vx_ptr = view.vx;
+            auto vy_ptr = view.vy;
+            auto vz_ptr = view.vz;
+
+            auto h_px_buf = d_history_px;
+            auto h_py_buf = d_history_py;
+            auto h_pz_buf = d_history_pz;
+            auto h_vx_buf = d_history_vx;
+            auto h_vy_buf = d_history_vy;
+            auto h_vz_buf = d_history_vz;
+
+            cgh.single_task([=]() {
+                h_px_buf[step] = px_ptr[0];
+                h_py_buf[step] = py_ptr[0];
+                h_pz_buf[step] = pz_ptr[0];
+                h_vx_buf[step] = vx_ptr[0];
+                h_vy_buf[step] = vy_ptr[0];
+                h_vz_buf[step] = vz_ptr[0];
+            });
+        }).wait();
+    }
+
+    // 6. Kopiowanie całej historii z GPU do pamięci hosta (CPU)
+    std::vector<float> h_history_px(num_steps);
+    std::vector<float> h_history_py(num_steps);
+    std::vector<float> h_history_pz(num_steps);
+    std::vector<float> h_history_vx(num_steps);
+    std::vector<float> h_history_vy(num_steps);
+    std::vector<float> h_history_vz(num_steps);
+
+    queue_.memcpy(h_history_px.data(), d_history_px, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_py.data(), d_history_py, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_pz.data(), d_history_pz, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vx.data(), d_history_vx, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vy.data(), d_history_vy, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vz.data(), d_history_vz, num_steps * sizeof(float)).wait();
+
+    // 7. Weryfikacja każdego kroku w pętli na hoście
+    for (int step = 0; step < num_steps; ++step) {
+        float time_t = (step + 1) * dt;
+        float px = h_history_px[step];
+        float py = h_history_py[step];
+        float pz = h_history_pz[step];
+        float vx = h_history_vx[step];
+        float vy = h_history_vy[step];
+        float vz = h_history_vz[step];
+
+        // A. Sprawdzenie brak dryftu poprzecznego
+        EXPECT_NEAR(px, 0.0f, 1e-6f);
+        EXPECT_NEAR(py, 0.0f, 1e-6f);
+        EXPECT_NEAR(vx, 0.0f, 1e-6f);
+        EXPECT_NEAR(vy, 0.0f, 1e-6f);
+
+        // B. Stałość prędkości wzdłuż osi Z
+        EXPECT_NEAR(vz, vz0, 1e-3f);
+
+        // C. Liniowy przyrost pozycji oczekiwany analitycznie
+        float expected_z = vz0 * time_t;
+        EXPECT_NEAR(pz, expected_z, 1e-4f);
+    }
+
+    // 8. Zwolnienie pamięci alokowanej na urządzeniu
+    sycl::free(d_history_px, queue_);
+    sycl::free(d_history_py, queue_);
+    sycl::free(d_history_pz, queue_);
+    sycl::free(d_history_vx, queue_);
+    sycl::free(d_history_vy, queue_);
+    sycl::free(d_history_vz, queue_);
+}
+
+/**
+ * @brief Tests the cyclotron circular motion of a hydrogen ion in a uniform magnetic field 
+ *        perpendicular to its velocity vector using an on-device history buffer.
+ */
+TEST_F(BorisPusherStrategyTest, HydrogenIonPerpendicularMagneticFieldHistoryBufferTest) {
+    // 1. Physical setup for a heavy hydrogen ion
+    float dt = 1e-9f; // Time step [s] (adjusted for ion gyrofrequency)
+    constexpr float q_ion = static_cast<float>(Constants::CHARGE_HYDROGEN_ION);
+    constexpr float m_ion = static_cast<float>(Constants::MASS_HYDROGEN_ION);
+    float q_over_m = q_ion / m_ion;
+
+    float B_z = 0.5f;       // Uniform magnetic field along Z-axis [Tesla]
+    float v0 = 5000.0f;     // Initial velocity along X-axis [m/s]
+
+    int num_steps = 200;
+
+    // Analytical cyclotron radius for ion: R = (m_ion * v_perp) / (|q_ion| * B_z)
+    float expected_radius = std::abs(m_ion * v0 / (q_ion * B_z));
+    float center_x = 0.0f;
+    float center_y = -expected_radius; // Positive since q > 0 and B_z > 0 causes initial upward Lorentz force
+
+    // 2. Prepare a chunk containing a single hydrogen ion
+    Chunk chunk(queue_, 1);
+    chunk.set_count(1);
+    ChunkSoAView view = chunk.get_view();
+
+    std::vector<float> h_px = {0.0f};
+    std::vector<float> h_py = {0.0f};
+    std::vector<float> h_pz = {0.0f};
+    std::vector<float> h_vx = {v0};
+    std::vector<float> h_vy = {0.0f};
+    std::vector<float> h_vz = {0.0f};
+
+    queue_.memcpy(view.px, h_px.data(), sizeof(float)).wait();
+    queue_.memcpy(view.py, h_py.data(), sizeof(float)).wait();
+    queue_.memcpy(view.pz, h_pz.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vx, h_vx.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vy, h_vy.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vz, h_vz.data(), sizeof(float)).wait();
+
+    // 3. Allocate on-device history buffers to record states across all time steps
+    float* d_history_px = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_py = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_pz = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vx = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vy = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vz = sycl::malloc_device<float>(num_steps, queue_);
+
+    // 4. Configure Mock Field and Pusher Strategy
+    MockGridField mock_grid(queue_);
+    BorisPusherStrategy<MockElectromagneticField> pusher;
+    auto pusher_view = reinterpret_cast<BorisPusherStrategyView*>(&pusher);
+    pusher_view->field_policy_ = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, B_z};
+
+    // 5. Run simulation loop entirely on the GPU and record history on device
+    for (int step = 0; step < num_steps; ++step) {
+        queue_.submit([&](sycl::handler &cgh) {
+            pusher.push(view, dt, q_over_m, reinterpret_cast<GridField&>(mock_grid), cgh);
+        }).wait();
+
+        // Record current state into device history arrays
+        queue_.submit([&](sycl::handler &cgh) {
+            auto px_ptr = view.px;
+            auto py_ptr = view.py;
+            auto pz_ptr = view.pz;
+            auto vx_ptr = view.vx;
+            auto vy_ptr = view.vy;
+            auto vz_ptr = view.vz;
+
+            auto h_px_buf = d_history_px;
+            auto h_py_buf = d_history_py;
+            auto h_pz_buf = d_history_pz;
+            auto h_vx_buf = d_history_vx;
+            auto h_vy_buf = d_history_vy;
+            auto h_vz_buf = d_history_vz;
+
+            cgh.single_task([=]() {
+                h_px_buf[step] = px_ptr[0];
+                h_py_buf[step] = py_ptr[0];
+                h_pz_buf[step] = pz_ptr[0];
+                h_vx_buf[step] = vx_ptr[0];
+                h_vy_buf[step] = vy_ptr[0];
+                h_vz_buf[step] = vz_ptr[0];
+            });
+        }).wait();
+    }
+
+    // 6. Copy history buffers from device to host for batch verification
+    std::vector<float> h_history_px(num_steps);
+    std::vector<float> h_history_py(num_steps);
+    std::vector<float> h_history_pz(num_steps);
+    std::vector<float> h_history_vx(num_steps);
+    std::vector<float> h_history_vy(num_steps);
+    std::vector<float> h_history_vz(num_steps);
+
+    queue_.memcpy(h_history_px.data(), d_history_px, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_py.data(), d_history_py, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_pz.data(), d_history_pz, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vx.data(), d_history_vx, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vy.data(), d_history_vy, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vz.data(), d_history_vz, num_steps * sizeof(float)).wait();
+
+    // 7. Validate all recorded steps on host
+    for (int step = 0; step < num_steps; ++step) {
+        float px = h_history_px[step];
+        float py = h_history_py[step];
+        float pz = h_history_pz[step];
+        float vx = h_history_vx[step];
+        float vy = h_history_vy[step];
+        float vz = h_history_vz[step];
+
+        // A. Assert strictly zero displacement and velocity along the magnetic field axis (Z-axis)
+        EXPECT_NEAR(pz, 0.0f, 1e-5f);
+        EXPECT_NEAR(vz, 0.0f, 1e-5f);
+
+        // B. Assert total velocity magnitude remains constant
+        float current_speed = std::sqrt(vx * vx + vy * vy + vz * vz);
+        EXPECT_NEAR(current_speed, v0, 1e-2f);
+
+        // C. Assert cyclotron radius invariance (circular motion around the field lines)
+        float current_radius = std::sqrt((px - center_x) * (px - center_x) + 
+                                         (py - center_y) * (py - center_y));
+        EXPECT_NEAR(current_radius, expected_radius, expected_radius * 0.02f);
+    }
+
+    // 8. Cleanup device history memory
+    sycl::free(d_history_px, queue_);
+    sycl::free(d_history_py, queue_);
+    sycl::free(d_history_pz, queue_);
+    sycl::free(d_history_vx, queue_);
+    sycl::free(d_history_vy, queue_);
+    sycl::free(d_history_vz, queue_);
+}
+
+/**
+ * @brief Tests the cyclotron circular motion of a hydrogen ion in a uniform magnetic field,
+ *        where each timestep advances the gyro-angle by exactly 30 degrees.
+ */
+TEST_F(BorisPusherStrategyTest, HydrogenIonPerpendicularMagneticFieldHistoryBufferTest30) {
+    // 1. Physical setup for a heavy hydrogen ion
+    constexpr float q_ion = static_cast<float>(Constants::CHARGE_HYDROGEN_ION);
+    constexpr float m_ion = static_cast<float>(Constants::MASS_HYDROGEN_ION);
+    float q_over_m = q_ion / m_ion;
+
+    float B_z = 0.5f;       // Uniform magnetic field along Z-axis [Tesla]
+    float v0 = 5000.0f;     // Initial velocity along X-axis [m/s]
+
+    // Cyklotron frequency: Omega_c = (q * B) / m
+    float omega_c = (q_ion * B_z) / m_ion;
+
+    // Target angle per step: 20 degrees in radians -> 30 * (PI / 180) = PI / 6
+    float target_angle_deg = 30.0f;
+    float target_angle_rad = target_angle_deg * (static_cast<float>(Constants::PI) / 180.0f);
+
+    // Exact time step for 30 degrees per step: dt = delta_theta / omega_c
+    float dt = target_angle_rad / omega_c;
+
+    int num_steps = 200;
+
+    // Analytical cyclotron radius for ion: R = (m_ion * v_perp) / (|q_ion| * B_z)
+    float expected_radius = std::abs(m_ion * v0 / (q_ion * B_z));
+    float center_x = 0.0f;
+    float center_y = -expected_radius; // Corrected offset for q > 0 and B_z > 0
+
+    // 2. Prepare a chunk containing a single hydrogen ion
+    Chunk chunk(queue_, 1);
+    chunk.set_count(1);
+    ChunkSoAView view = chunk.get_view();
+
+    std::vector<float> h_px = {0.0f};
+    std::vector<float> h_py = {0.0f};
+    std::vector<float> h_pz = {0.0f};
+    std::vector<float> h_vx = {v0};
+    std::vector<float> h_vy = {0.0f};
+    std::vector<float> h_vz = {0.0f};
+
+    queue_.memcpy(view.px, h_px.data(), sizeof(float)).wait();
+    queue_.memcpy(view.py, h_py.data(), sizeof(float)).wait();
+    queue_.memcpy(view.pz, h_pz.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vx, h_vx.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vy, h_vy.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vz, h_vz.data(), sizeof(float)).wait();
+
+    // 3. Allocate on-device history buffers to record states across all time steps
+    float* d_history_px = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_py = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_pz = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vx = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vy = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vz = sycl::malloc_device<float>(num_steps, queue_);
+
+    // 4. Configure Mock Field and Pusher Strategy
+    MockGridField mock_grid(queue_);
+    BorisPusherStrategy<MockElectromagneticField> pusher;
+    auto pusher_view = reinterpret_cast<BorisPusherStrategyView*>(&pusher);
+    pusher_view->field_policy_ = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, B_z};
+
+    // 5. Run simulation loop entirely on the GPU and record history on device
+    for (int step = 0; step < num_steps; ++step) {
+        queue_.submit([&](sycl::handler &cgh) {
+            pusher.push(view, dt, q_over_m, reinterpret_cast<GridField&>(mock_grid), cgh);
+        }).wait(); // <-- Obowiązkowy wait po wysłaniu puszera!
+
+        // Record current state into device history arrays
+        queue_.submit([&](sycl::handler &cgh) {
+            auto px_ptr = view.px;
+            auto py_ptr = view.py;
+            auto pz_ptr = view.pz;
+            auto vx_ptr = view.vx;
+            auto vy_ptr = view.vy;
+            auto vz_ptr = view.vz;
+
+            auto h_px_buf = d_history_px;
+            auto h_py_buf = d_history_py;
+            auto h_pz_buf = d_history_pz;
+            auto h_vx_buf = d_history_vx;
+            auto h_vy_buf = d_history_vy;
+            auto h_vz_buf = d_history_vz;
+
+            cgh.single_task([=]() {
+                h_px_buf[step] = px_ptr[0];
+                h_py_buf[step] = py_ptr[0];
+                h_pz_buf[step] = pz_ptr[0];
+                h_vx_buf[step] = vx_ptr[0];
+                h_vy_buf[step] = vy_ptr[0];
+                h_vz_buf[step] = vz_ptr[0];
+            });
+        }).wait();
+    }
+
+    // 6. Copy history buffers from device to host for batch verification
+    std::vector<float> h_history_px(num_steps);
+    std::vector<float> h_history_py(num_steps);
+    std::vector<float> h_history_pz(num_steps);
+    std::vector<float> h_history_vx(num_steps);
+    std::vector<float> h_history_vy(num_steps);
+    std::vector<float> h_history_vz(num_steps);
+
+    queue_.memcpy(h_history_px.data(), d_history_px, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_py.data(), d_history_py, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_pz.data(), d_history_pz, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vx.data(), d_history_vx, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vy.data(), d_history_vy, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vz.data(), d_history_vz, num_steps * sizeof(float)).wait();
+
+    // 7. Validate all recorded steps on host
+    for (int step = 0; step < num_steps; ++step) {
+        float px = h_history_px[step];
+        float py = h_history_py[step];
+        float pz = h_history_pz[step];
+        float vx = h_history_vx[step];
+        float vy = h_history_vy[step];
+        float vz = h_history_vz[step];
+
+        // A. Assert strictly zero displacement and velocity along the magnetic field axis (Z-axis)
+        EXPECT_NEAR(pz, 0.0f, 1e-5f);
+        EXPECT_NEAR(vz, 0.0f, 1e-5f);
+
+        // B. Assert total velocity magnitude remains constant
+        float current_speed = std::sqrt(vx * vx + vy * vy + vz * vz);
+        EXPECT_NEAR(current_speed, v0, 1e-2f);
+
+        // C. Assert cyclotron radius invariance (circular motion around the field lines)
+        float current_radius = std::sqrt((px - center_x) * (px - center_x) + 
+                                         (py - center_y) * (py - center_y));
+        EXPECT_NEAR(current_radius, expected_radius, expected_radius * 0.05f);
+    }
+
+    // 8. Cleanup device history memory
+    sycl::free(d_history_px, queue_);
+    sycl::free(d_history_py, queue_);
+    sycl::free(d_history_pz, queue_);
+    sycl::free(d_history_vx, queue_);
+    sycl::free(d_history_vy, queue_);
+    sycl::free(d_history_vz, queue_);
+}
+
+/**
+ * @brief Tests the cyclotron circular motion of a hydrogen ion in a uniform magnetic field,
+ *        where each timestep advances the gyro-angle by exactly 60 degrees.
+ */
+TEST_F(BorisPusherStrategyTest, HydrogenIonPerpendicularMagneticFieldHistoryBufferTest60) {
+    // 1. Physical setup for a heavy hydrogen ion
+    constexpr float q_ion = static_cast<float>(Constants::CHARGE_HYDROGEN_ION);
+    constexpr float m_ion = static_cast<float>(Constants::MASS_HYDROGEN_ION);
+    float q_over_m = q_ion / m_ion;
+
+    float B_z = 0.5f;       // Uniform magnetic field along Z-axis [Tesla]
+    float v0 = 5000.0f;     // Initial velocity along X-axis [m/s]
+
+    // Cyklotron frequency: Omega_c = (q * B) / m
+    float omega_c = (q_ion * B_z) / m_ion;
+
+    // Target angle per step: 60 degrees in radians -> 60 * (PI / 180) = PI / 3
+    float target_angle_deg = 60.0f;
+    float target_angle_rad = target_angle_deg * (static_cast<float>(Constants::PI) / 180.0f);
+
+    // Exact time step for 60 degrees per step: dt = delta_theta / omega_c
+    float dt = target_angle_rad / omega_c;
+
+    int num_steps = 200;
+
+    // Analytical cyclotron radius for ion: R = (m_ion * v_perp) / (|q_ion| * B_z)
+    float expected_radius = std::abs(m_ion * v0 / (q_ion * B_z));
+    float center_x = 0.0f;
+    float center_y = -expected_radius; // Corrected offset for q > 0 and B_z > 0
+
+    // 2. Prepare a chunk containing a single hydrogen ion
+    Chunk chunk(queue_, 1);
+    chunk.set_count(1);
+    ChunkSoAView view = chunk.get_view();
+
+    std::vector<float> h_px = {0.0f};
+    std::vector<float> h_py = {0.0f};
+    std::vector<float> h_pz = {0.0f};
+    std::vector<float> h_vx = {v0};
+    std::vector<float> h_vy = {0.0f};
+    std::vector<float> h_vz = {0.0f};
+
+    queue_.memcpy(view.px, h_px.data(), sizeof(float)).wait();
+    queue_.memcpy(view.py, h_py.data(), sizeof(float)).wait();
+    queue_.memcpy(view.pz, h_pz.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vx, h_vx.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vy, h_vy.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vz, h_vz.data(), sizeof(float)).wait();
+
+    // 3. Allocate on-device history buffers to record states across all time steps
+    float* d_history_px = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_py = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_pz = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vx = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vy = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vz = sycl::malloc_device<float>(num_steps, queue_);
+
+    // 4. Configure Mock Field and Pusher Strategy
+    MockGridField mock_grid(queue_);
+    BorisPusherStrategy<MockElectromagneticField> pusher;
+    auto pusher_view = reinterpret_cast<BorisPusherStrategyView*>(&pusher);
+    pusher_view->field_policy_ = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, B_z};
+
+    // 5. Run simulation loop entirely on the GPU and record history on device
+    for (int step = 0; step < num_steps; ++step) {
+        queue_.submit([&](sycl::handler &cgh) {
+            pusher.push(view, dt, q_over_m, reinterpret_cast<GridField&>(mock_grid), cgh);
+        }).wait(); // <-- Obowiązkowy wait po wysłaniu puszera!
+
+        // Record current state into device history arrays
+        queue_.submit([&](sycl::handler &cgh) {
+            auto px_ptr = view.px;
+            auto py_ptr = view.py;
+            auto pz_ptr = view.pz;
+            auto vx_ptr = view.vx;
+            auto vy_ptr = view.vy;
+            auto vz_ptr = view.vz;
+
+            auto h_px_buf = d_history_px;
+            auto h_py_buf = d_history_py;
+            auto h_pz_buf = d_history_pz;
+            auto h_vx_buf = d_history_vx;
+            auto h_vy_buf = d_history_vy;
+            auto h_vz_buf = d_history_vz;
+
+            cgh.single_task([=]() {
+                h_px_buf[step] = px_ptr[0];
+                h_py_buf[step] = py_ptr[0];
+                h_pz_buf[step] = pz_ptr[0];
+                h_vx_buf[step] = vx_ptr[0];
+                h_vy_buf[step] = vy_ptr[0];
+                h_vz_buf[step] = vz_ptr[0];
+            });
+        }).wait();
+    }
+
+    // 6. Copy history buffers from device to host for batch verification
+    std::vector<float> h_history_px(num_steps);
+    std::vector<float> h_history_py(num_steps);
+    std::vector<float> h_history_pz(num_steps);
+    std::vector<float> h_history_vx(num_steps);
+    std::vector<float> h_history_vy(num_steps);
+    std::vector<float> h_history_vz(num_steps);
+
+    queue_.memcpy(h_history_px.data(), d_history_px, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_py.data(), d_history_py, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_pz.data(), d_history_pz, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vx.data(), d_history_vx, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vy.data(), d_history_vy, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vz.data(), d_history_vz, num_steps * sizeof(float)).wait();
+
+    // 7. Validate all recorded steps on host
+    for (int step = 0; step < num_steps; ++step) {
+        float px = h_history_px[step];
+        float py = h_history_py[step];
+        float pz = h_history_pz[step];
+        float vx = h_history_vx[step];
+        float vy = h_history_vy[step];
+        float vz = h_history_vz[step];
+
+        // A. Assert strictly zero displacement and velocity along the magnetic field axis (Z-axis)
+        EXPECT_NEAR(pz, 0.0f, 1e-5f);
+        EXPECT_NEAR(vz, 0.0f, 1e-5f);
+
+        // B. Assert total velocity magnitude remains constant
+        float current_speed = std::sqrt(vx * vx + vy * vy + vz * vz);
+        EXPECT_NEAR(current_speed, v0, 1e-2f);
+
+        // C. Assert cyclotron radius invariance (circular motion around the field lines)
+        float current_radius = std::sqrt((px - center_x) * (px - center_x) + 
+                                         (py - center_y) * (py - center_y));
+        EXPECT_NEAR(current_radius, expected_radius, expected_radius * 0.05f);
+    }
+
+    // 8. Cleanup device history memory
+    sycl::free(d_history_px, queue_);
+    sycl::free(d_history_py, queue_);
+    sycl::free(d_history_pz, queue_);
+    sycl::free(d_history_vx, queue_);
+    sycl::free(d_history_vy, queue_);
+    sycl::free(d_history_vz, queue_);
+}
+
+/**
+ * @brief Tests the cyclotron circular motion of a hydrogen ion in a uniform magnetic field,
+ *        where each timestep advances the gyro-angle by exactly 360 degrees.
+ */
+TEST_F(BorisPusherStrategyTest, HydrogenIonPerpendicularMagneticFieldHistoryBufferTest360) {
+    // 1. Physical setup for a heavy hydrogen ion
+    constexpr float q_ion = static_cast<float>(Constants::CHARGE_HYDROGEN_ION);
+    constexpr float m_ion = static_cast<float>(Constants::MASS_HYDROGEN_ION);
+    float q_over_m = q_ion / m_ion;
+
+    float B_z = 0.5f;       // Uniform magnetic field along Z-axis [Tesla]
+    float v0 = 5000.0f;     // Initial velocity along X-axis [m/s]
+
+    // Cyklotron frequency: Omega_c = (q * B) / m
+    float omega_c = (q_ion * B_z) / m_ion;
+
+    // Target angle per step: 360 degrees in radians -> 360 * (PI / 180) = PI
+    float target_angle_deg = 360.0f;
+    float target_angle_rad = target_angle_deg * (static_cast<float>(Constants::PI) / 180.0f);
+
+    // Exact time step for 360 degrees per step: dt = delta_theta / omega_c
+    float dt = target_angle_rad / omega_c;
+
+    int num_steps = 200;
+
+    // Analytical cyclotron radius for ion: R = (m_ion * v_perp) / (|q_ion| * B_z)
+    float expected_radius = std::abs(m_ion * v0 / (q_ion * B_z));
+    float center_x = 0.0f;
+    float center_y = -expected_radius; // Corrected offset for q > 0 and B_z > 0
+
+    // 2. Prepare a chunk containing a single hydrogen ion
+    Chunk chunk(queue_, 1);
+    chunk.set_count(1);
+    ChunkSoAView view = chunk.get_view();
+
+    std::vector<float> h_px = {0.0f};
+    std::vector<float> h_py = {0.0f};
+    std::vector<float> h_pz = {0.0f};
+    std::vector<float> h_vx = {v0};
+    std::vector<float> h_vy = {0.0f};
+    std::vector<float> h_vz = {0.0f};
+
+    queue_.memcpy(view.px, h_px.data(), sizeof(float)).wait();
+    queue_.memcpy(view.py, h_py.data(), sizeof(float)).wait();
+    queue_.memcpy(view.pz, h_pz.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vx, h_vx.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vy, h_vy.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vz, h_vz.data(), sizeof(float)).wait();
+
+    // 3. Allocate on-device history buffers to record states across all time steps
+    float* d_history_px = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_py = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_pz = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vx = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vy = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vz = sycl::malloc_device<float>(num_steps, queue_);
+
+    // 4. Configure Mock Field and Pusher Strategy
+    MockGridField mock_grid(queue_);
+    BorisPusherStrategy<MockElectromagneticField> pusher;
+    auto pusher_view = reinterpret_cast<BorisPusherStrategyView*>(&pusher);
+    pusher_view->field_policy_ = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, B_z};
+
+    // 5. Run simulation loop entirely on the GPU and record history on device
+    for (int step = 0; step < num_steps; ++step) {
+        queue_.submit([&](sycl::handler &cgh) {
+            pusher.push(view, dt, q_over_m, reinterpret_cast<GridField&>(mock_grid), cgh);
+        }).wait(); // <-- Obowiązkowy wait po wysłaniu puszera!
+
+        // Record current state into device history arrays
+        queue_.submit([&](sycl::handler &cgh) {
+            auto px_ptr = view.px;
+            auto py_ptr = view.py;
+            auto pz_ptr = view.pz;
+            auto vx_ptr = view.vx;
+            auto vy_ptr = view.vy;
+            auto vz_ptr = view.vz;
+
+            auto h_px_buf = d_history_px;
+            auto h_py_buf = d_history_py;
+            auto h_pz_buf = d_history_pz;
+            auto h_vx_buf = d_history_vx;
+            auto h_vy_buf = d_history_vy;
+            auto h_vz_buf = d_history_vz;
+
+            cgh.single_task([=]() {
+                h_px_buf[step] = px_ptr[0];
+                h_py_buf[step] = py_ptr[0];
+                h_pz_buf[step] = pz_ptr[0];
+                h_vx_buf[step] = vx_ptr[0];
+                h_vy_buf[step] = vy_ptr[0];
+                h_vz_buf[step] = vz_ptr[0];
+            });
+        }).wait();
+    }
+
+    // 6. Copy history buffers from device to host for batch verification
+    std::vector<float> h_history_px(num_steps);
+    std::vector<float> h_history_py(num_steps);
+    std::vector<float> h_history_pz(num_steps);
+    std::vector<float> h_history_vx(num_steps);
+    std::vector<float> h_history_vy(num_steps);
+    std::vector<float> h_history_vz(num_steps);
+
+    queue_.memcpy(h_history_px.data(), d_history_px, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_py.data(), d_history_py, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_pz.data(), d_history_pz, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vx.data(), d_history_vx, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vy.data(), d_history_vy, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vz.data(), d_history_vz, num_steps * sizeof(float)).wait();
+
+    // 7. Validate all recorded steps on host
+    for (int step = 0; step < num_steps; ++step) {
+        float px = h_history_px[step];
+        float py = h_history_py[step];
+        float pz = h_history_pz[step];
+        float vx = h_history_vx[step];
+        float vy = h_history_vy[step];
+        float vz = h_history_vz[step];
+
+        // A. Assert strictly zero displacement and velocity along the magnetic field axis (Z-axis)
+        EXPECT_NEAR(pz, 0.0f, 1e-5f);
+        EXPECT_NEAR(vz, 0.0f, 1e-5f);
+
+        // B. Assert total velocity magnitude remains constant
+        float current_speed = std::sqrt(vx * vx + vy * vy + vz * vz);
+        EXPECT_NEAR(current_speed, v0, 1e-2f);
+
+        // C. Assert cyclotron radius invariance (circular motion around the field lines)
+        float current_radius = std::sqrt((px - center_x) * (px - center_x) + 
+                                         (py - center_y) * (py - center_y));
+        EXPECT_NEAR(current_radius, expected_radius, expected_radius * 0.05f);
+    }
+
+    // 8. Cleanup device history memory
+    sycl::free(d_history_px, queue_);
+    sycl::free(d_history_py, queue_);
+    sycl::free(d_history_pz, queue_);
+    sycl::free(d_history_vx, queue_);
+    sycl::free(d_history_vy, queue_);
+    sycl::free(d_history_vz, queue_);
+}
+
+/**
+ * @brief Tests the cyclotron circular motion of a hydrogen ion in a uniform magnetic field,
+ *        where each timestep advances the gyro-angle by exactly 720 degrees.
+ */
+TEST_F(BorisPusherStrategyTest, HydrogenIonPerpendicularMagneticFieldHistoryBufferTest720) {
+    // 1. Physical setup for a heavy hydrogen ion
+    constexpr float q_ion = static_cast<float>(Constants::CHARGE_HYDROGEN_ION);
+    constexpr float m_ion = static_cast<float>(Constants::MASS_HYDROGEN_ION);
+    float q_over_m = q_ion / m_ion;
+
+    float B_z = 0.5f;       // Uniform magnetic field along Z-axis [Tesla]
+    float v0 = 5000.0f;     // Initial velocity along X-axis [m/s]
+
+    // Cyklotron frequency: Omega_c = (q * B) / m
+    float omega_c = (q_ion * B_z) / m_ion;
+
+    // Target angle per step: 720 degrees in radians -> 720 * (PI / 180) = 2*PI
+    float target_angle_deg = 720.0f;
+    float target_angle_rad = target_angle_deg * (static_cast<float>(Constants::PI) / 180.0f);
+
+    // Exact time step for 720 degrees per step: dt = delta_theta / omega_c
+    float dt = target_angle_rad / omega_c;
+
+    int num_steps = 200;
+
+    // Analytical cyclotron radius for ion: R = (m_ion * v_perp) / (|q_ion| * B_z)
+    float expected_radius = std::abs(m_ion * v0 / (q_ion * B_z));
+    float center_x = 0.0f;
+    float center_y = -expected_radius; // Corrected offset for q > 0 and B_z > 0
+
+    // // ---------------- tymczasowa diagnostyka ---------------------
+    // const float gamma0 =
+    //     1.0f / std::sqrt(1.0f - (v0 * v0) /
+    //                     (static_cast<float>(Constants::c) *
+    //                     static_cast<float>(Constants::c)));
+
+    // const float omega_actual =
+    //     std::abs(q_over_m) * std::abs(B_z) / gamma0;
+
+    // std::cout
+    //     << "\n=== Boris diagnostics ===\n"
+    //     << "target_angle_deg = " << target_angle_deg << '\n'
+    //     << "dt              = " << dt << '\n'
+    //     << "q_over_m        = " << q_over_m << '\n'
+    //     << "omega_c         = " << omega_c << '\n'
+    //     << "omega_actual    = " << omega_actual << '\n'
+    //     << "omega_actual*dt = " << omega_actual * dt << " rad\n"
+    //     << "expected_radius = " << expected_radius << '\n'
+    //     << std::endl;
+    // // -------------------------------------------------------------
+
+    // 2. Prepare a chunk containing a single hydrogen ion
+    Chunk chunk(queue_, 1);
+    chunk.set_count(1);
+    ChunkSoAView view = chunk.get_view();
+
+    std::vector<float> h_px = {0.0f};
+    std::vector<float> h_py = {0.0f};
+    std::vector<float> h_pz = {0.0f};
+    std::vector<float> h_vx = {v0};
+    std::vector<float> h_vy = {0.0f};
+    std::vector<float> h_vz = {0.0f};
+
+    queue_.memcpy(view.px, h_px.data(), sizeof(float)).wait();
+    queue_.memcpy(view.py, h_py.data(), sizeof(float)).wait();
+    queue_.memcpy(view.pz, h_pz.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vx, h_vx.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vy, h_vy.data(), sizeof(float)).wait();
+    queue_.memcpy(view.vz, h_vz.data(), sizeof(float)).wait();
+
+    // 3. Allocate on-device history buffers to record states across all time steps
+    float* d_history_px = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_py = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_pz = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vx = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vy = sycl::malloc_device<float>(num_steps, queue_);
+    float* d_history_vz = sycl::malloc_device<float>(num_steps, queue_);
+
+    // 4. Configure Mock Field and Pusher Strategy
+    MockGridField mock_grid(queue_);
+    BorisPusherStrategy<MockElectromagneticField> pusher;
+    auto pusher_view = reinterpret_cast<BorisPusherStrategyView*>(&pusher);
+    pusher_view->field_policy_ = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, B_z};
+
+    // 5. Run simulation loop entirely on the GPU and record history on device
+    for (int step = 0; step < num_steps; ++step) {
+        queue_.submit([&](sycl::handler &cgh) {
+            pusher.push(view, dt, q_over_m, reinterpret_cast<GridField&>(mock_grid), cgh);
+        }).wait(); // <-- Obowiązkowy wait po wysłaniu puszera!
+
+        // Record current state into device history arrays
+        queue_.submit([&](sycl::handler &cgh) {
+            auto px_ptr = view.px;
+            auto py_ptr = view.py;
+            auto pz_ptr = view.pz;
+            auto vx_ptr = view.vx;
+            auto vy_ptr = view.vy;
+            auto vz_ptr = view.vz;
+
+            auto h_px_buf = d_history_px;
+            auto h_py_buf = d_history_py;
+            auto h_pz_buf = d_history_pz;
+            auto h_vx_buf = d_history_vx;
+            auto h_vy_buf = d_history_vy;
+            auto h_vz_buf = d_history_vz;
+
+            cgh.single_task([=]() {
+                h_px_buf[step] = px_ptr[0];
+                h_py_buf[step] = py_ptr[0];
+                h_pz_buf[step] = pz_ptr[0];
+                h_vx_buf[step] = vx_ptr[0];
+                h_vy_buf[step] = vy_ptr[0];
+                h_vz_buf[step] = vz_ptr[0];
+            });
+        }).wait();
+    }
+
+    // 6. Copy history buffers from device to host for batch verification
+    std::vector<float> h_history_px(num_steps);
+    std::vector<float> h_history_py(num_steps);
+    std::vector<float> h_history_pz(num_steps);
+    std::vector<float> h_history_vx(num_steps);
+    std::vector<float> h_history_vy(num_steps);
+    std::vector<float> h_history_vz(num_steps);
+
+    queue_.memcpy(h_history_px.data(), d_history_px, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_py.data(), d_history_py, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_pz.data(), d_history_pz, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vx.data(), d_history_vx, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vy.data(), d_history_vy, num_steps * sizeof(float)).wait();
+    queue_.memcpy(h_history_vz.data(), d_history_vz, num_steps * sizeof(float)).wait();
+
+    // 7. Validate all recorded steps on host
+    for (int step = 0; step < num_steps; ++step) {
+        float px = h_history_px[step];
+        float py = h_history_py[step];
+        float pz = h_history_pz[step];
+        float vx = h_history_vx[step];
+        float vy = h_history_vy[step];
+        float vz = h_history_vz[step];
+
+        // // ---------------- tymczasowa diagnostyka ---------------------
+        // const float measured_speed =
+        //     std::sqrt(vx * vx + vy * vy + vz * vz);
+
+        // const float measured_radius =
+        //     std::sqrt((px - center_x) * (px - center_x) +
+        //             (py - center_y) * (py - center_y));
+
+        // const float measured_angle =
+        //     std::atan2(-vy, vx) * 180.0f /
+        //     static_cast<float>(Constants::PI);
+
+        // std::cout
+        //     << "step=" << step
+        //     << " angle_target_deg=" << (step + 1) * target_angle_deg
+        //     << " vx=" << vx
+        //     << " vy=" << vy
+        //     << " speed=" << measured_speed
+        //     << " px=" << px
+        //     << " py=" << py
+        //     << " radius=" << measured_radius
+        //     << " velocity_angle_deg=" << measured_angle
+        //     << '\n';
+        // // ---------------- tymczasowa diagnostyka ---------------------
+
+        // A. Assert strictly zero displacement and velocity along the magnetic field axis (Z-axis)
+        EXPECT_NEAR(pz, 0.0f, 1e-5f);
+        EXPECT_NEAR(vz, 0.0f, 1e-5f);
+
+        // B. Assert total velocity magnitude remains constant
+        float current_speed = std::sqrt(vx * vx + vy * vy + vz * vz);
+        EXPECT_NEAR(current_speed, v0, 1e-2f);
+
+        // C. Assert cyclotron radius invariance (circular motion around the field lines)
+        float current_radius = std::sqrt((px - center_x) * (px - center_x) + 
+                                         (py - center_y) * (py - center_y));
+        EXPECT_NEAR(current_radius, expected_radius, expected_radius * 0.05f);
+    }
+
+    // 8. Cleanup device history memory
+    sycl::free(d_history_px, queue_);
+    sycl::free(d_history_py, queue_);
+    sycl::free(d_history_pz, queue_);
+    sycl::free(d_history_vx, queue_);
+    sycl::free(d_history_vy, queue_);
+    sycl::free(d_history_vz, queue_);
+}
+
+/**
+ * @brief Tests the raw Borish Algorithm on cpu in cyclotron circular motion of a hydrogen ion in a uniform magnetic field,
+ *        where each timestep advances the gyro-angle by exactly 720 degrees.
+ */
+TEST_F(BorisPusherStrategyTest, HydrogenIonPerpendicularMagneticFieldHistoryBufferTest720_CPU)
+{
+    constexpr int num_steps = 200;
+    using Float = double;
+    using Vector3 = Vec3<Float>;
+
+    constexpr Float q_ion = static_cast<Float>(Constants::CHARGE_HYDROGEN_ION);
+    constexpr Float m_ion = static_cast<Float>(Constants::MASS_HYDROGEN_ION);
+
+    const Float q_over_m = q_ion / m_ion;
+
+    constexpr Float B_z = static_cast<Float>(0.5);
+    constexpr Float v0 = static_cast<Float>(5000.0);
+
+    const Float omega_c = (q_ion * B_z) / m_ion;
+
+    const Float target_angle_deg = static_cast<Float>(720);
+    const Float target_angle_rad = target_angle_deg * (static_cast<Float>(Constants::PI)) / static_cast<Float>(180.0);
+
+    const Float dt = target_angle_rad / omega_c;
+
+
+    const Float expected_radius = std::abs(m_ion * v0 / (q_ion * B_z));
+
+    const Float center_x = static_cast<Float>(0.0);
+    const Float center_y = -expected_radius;
+
+    // Field policy configured exactly as in the original test.
+    MockElectromagneticField field_policy{
+        0.0f, 0.0f, 0.0f,
+        0.0f, 0.0f, B_z
+    };
+
+    // Initial particle state stored directly on the CPU.
+    Vector3 pos{static_cast<Float>(0.0), static_cast<Float>(0.0), static_cast<Float>(0.0)};
+    Vector3 vel{static_cast<Float>(v0), static_cast<Float>(0.0), static_cast<Float>(0.0)};
+
+    std::vector<Vector3> history_pos;
+    std::vector<Vector3> history_vel;
+
+    history_pos.reserve(num_steps);
+    history_vel.reserve(num_steps);
+
+    // Run the actual production algorithm on the host.
+    for (int step = 0; step < num_steps; ++step) {
+        BorisPusherStrategy<MockElectromagneticField>::device_boris_algorithm<Float>(pos, vel, dt, q_over_m, field_policy);
+        history_pos.push_back(pos);
+        history_vel.push_back(vel);
+    }
+
+    // Verify the same invariants as in the original test.
+    for (int step = 0; step < num_steps; ++step) {
+        const Vector3& p = history_pos[step];
+        const Vector3& v = history_vel[step];
+
+        const Float current_speed = std::sqrt(v.x * v.x + v.y * v.y + v.z * v.z);
+
+        const Float dx = p.x - center_x;
+        const Float dy = p.y - center_y;
+
+        const Float current_radius = std::sqrt(dx * dx + dy * dy);
+
+        EXPECT_NEAR(p.z, static_cast<Float>(0.0), static_cast<Float>(1e-5))
+            << "step=" << step;
+
+        EXPECT_NEAR(v.z, static_cast<Float>(0.0), static_cast<Float>(1e-5))
+            << "step=" << step;
+
+        EXPECT_NEAR(current_speed, v0, static_cast<Float>(1e-2))
+            << "step=" << step
+            << ", speed=" << current_speed;
+
+        EXPECT_NEAR(
+            current_radius,
+            expected_radius,
+            expected_radius * static_cast<Float>(0.05))
+            << "step=" << step
+            << ", radius=" << current_radius;
+    }
 }

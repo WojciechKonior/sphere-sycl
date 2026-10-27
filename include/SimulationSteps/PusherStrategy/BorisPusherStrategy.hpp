@@ -68,15 +68,15 @@ public:
      */
     template <typename Float>
     requires std::floating_point<Float>
-    static inline int device_compute_boris_algorithm_sub_steps(Vec3<Float> vel, Vec3<Float> E, Vec3<Float> B, Float dt, Float q_over_m) {
+    static inline int device_compute_boris_algorithm_sub_steps(const Vec3<Float> &vel, const Vec3<Float> &E, const Vec3<Float> &B, const Float &dt, const Float &q_over_m) {
         using Vec3 = Vec3<Float>;
         constexpr Float c = static_cast<Float>(Constants::c);
         constexpr Float c2 = c * c;
         constexpr Float inv_c2 = 1.0f / c2;
 
-        Float B_mag = sycl::sqrt(Vec3::dot(B, B));
-        Float E_mag = sycl::sqrt(Vec3::dot(E, E));
-        Float speed_sq = Vec3::dot(vel, vel);
+        Float B_mag = sycl::sqrt(Vec3::dot(B, B)), &u_mag = B_mag;
+        Float E_mag = sycl::sqrt(Vec3::dot(E, E)), &reference_scale = E_mag;
+        Float speed_sq = Vec3::dot(vel, vel), &acceleration_u = speed_sq;
 
         // Czynnik gamma dla bieżącego stanu
         Float gamma = static_cast<Float>(1.0) / sycl::sqrt(sycl::fmax(static_cast<Float>(1e-7), static_cast<Float>(1.0) - speed_sq * inv_c2));
@@ -88,11 +88,11 @@ public:
 
         // 2. Kryterium elektryczne (relatywistyczne): ograniczenie zmiany pędu właściwego u na podkrok do max 20%
         // Ponieważ du = (q/m) * E * dt, sprawdzamy ułamek względem obecnego pędu u = gamma * v (lub skali c)
-        Float u_mag = gamma * sycl::sqrt(speed_sq);
-        Float acceleration_u = sycl::fabs(q_over_m) * E_mag;
+        u_mag = gamma * sycl::sqrt(speed_sq);
+        acceleration_u = sycl::fabs(q_over_m) * E_mag;
         
         // Jeśli cząstka stoi w spoczynku (u_mag = 0), odnosimy kryterium do c, żeby uniknąć dzielenia przez zero
-        Float reference_scale = sycl::fmax(u_mag, static_cast<Float>(0.1) * c);
+        reference_scale = sycl::fmax(u_mag, static_cast<Float>(0.1) * c);
         int sub_steps_elec = static_cast<int>(sycl::ceil((acceleration_u * dt) / (static_cast<Float>(0.2) * reference_scale)));
 
         // 3. Wybór najbardziej rygorystycznego wymogu (zakres od 1 do 32 podkroków)
@@ -117,26 +117,42 @@ public:
     template <typename Float>
     requires std::floating_point<Float>
     static inline void device_boris_algorithm(Vec3<Float> &pos, Vec3<Float> &vel, Float dt, Float q_over_m, const FieldPolicy &field_policy) {
-        // Pobranie pól E i B z siatki (na razie dummy values / stałe pola testowe)
+        // --- ZMIENNE I ALIASY ---
         using Vec3 = Vec3<Float>;
+        Float var1;
+        Float &vv = var1, &uu_final = var1, &uu_old = var1, &uu_minus = var1, &t_factor = var1, &hh = var1, &uu_new = var1;
         
+        Float var2;
+        Float &vv_safe = var2, &q_prim = var2;
+        
+        Float var3;
+        Float &gamma_init = var3, &gamma_final = var3, &gamma_old = var3, &gamma_minus = var3, &s_denom = var3, &gamma_new = var3;
+        
+        Vec3 vec1;
+        Vec3 &impulse1 = vec1, &h = vec1, &impulse2 = vec1, &v_new = vec1;
+        
+        Vec3 vec2;
+        Vec3 &u_minus_cross_h = vec2, &u_prim_cross_s = vec2;
+        
+        Vec3 vec3;
+        Vec3 &u_prim = vec3, &u_plus = vec3, &v_avg = vec3; 
+        
+        // Pobranie pól E i B z siatki (na razie dummy values / stałe pola testowe)
         Vec3 E, B;
         field_policy.template device_sample<Float>(pos, E, B);
-
-        constexpr Float c = static_cast<Float>(Constants::c); // Prędkość światła [m/s]
-        constexpr Float c2 = c * c;
+        constexpr Float c2 = static_cast<Float>(Constants::c) * static_cast<Float>(Constants::c);
         constexpr Float inv_c2 = static_cast<Float>(1.0) / c2;
 
         // --- PRZEJŚCIE NA PRĘDKOŚĆ WŁAŚCIWĄ (PROPER VELOCITY) u = gamma * v ---
-        Float vv = Vec3::dot(vel, vel);
-        Float vv_safe = sycl::fmin(vv, c2 * static_cast<Float>(0.999999));
-        Float gamma_init = static_cast<Float>(1.0) / sycl::sqrt(sycl::fmax(static_cast<Float>(1e-15), static_cast<Float>(1.0) - vv_safe * inv_c2));
-
+        vv = Vec3::dot(vel, vel);
+        vv_safe = sycl::fmin(vv, c2 * static_cast<Float>(0.999999));
+        gamma_init = static_cast<Float>(1.0) / sycl::sqrt(sycl::fmax(static_cast<Float>(1e-15), static_cast<Float>(1.0) - vv_safe * inv_c2));
         Vec3 u = Vec3::scale(vel, gamma_init);
 
         // --- ADAPTYWNE PODKROKI ---
         int sub_steps = device_compute_boris_algorithm_sub_steps<Float>(vel, E, B, dt, q_over_m);
         Float sub_dt = dt / static_cast<Float>(sub_steps);
+        q_prim = static_cast<Float>(0.5) * sub_dt * q_over_m; // half of time step times q over m
 
         // --- POCZĄTEK ALGORITMU BORISA (Relatywistycznego) ---
         for (auto step = 0; step < sub_steps; ++step)
@@ -144,49 +160,48 @@ public:
             field_policy.template device_sample<Float>(pos, E, B);
 
             // A. PIERWSZY PÓŁ-KROK ELEKTRYCZNY Z POPRAWKĄ RELATYWISTYCZNĄ
-            Float uu_old = Vec3::dot(u, u);
-            Float gamma_old = sycl::sqrt(static_cast<Float>(1.0) + uu_old * inv_c2);
+            uu_old = Vec3::dot(u, u);
+            gamma_old = sycl::sqrt(static_cast<Float>(1.0) + uu_old * inv_c2);
             Vec3 v_old = Vec3::scale(u, static_cast<Float>(1.0) / gamma_old);
 
             // Poprawka podłużna: u^- = u + q'E
-            Float q_prim = static_cast<Float>(0.5) * sub_dt * q_over_m; // half of time step times q over m
-            Vec3 impulse1 = Vec3::scale(E, q_prim);
+            impulse1 = Vec3::scale(E, q_prim);
             Vec3 u_minus = Vec3::add(u, impulse1);
 
             // B. ROTACJA MAGNETYCZNA BORISA
-            Float uu_minus = Vec3::dot(u_minus, u_minus);
-            Float gamma_minus = sycl::sqrt(static_cast<Float>(1.0) + uu_minus * inv_c2);
+            uu_minus = Vec3::dot(u_minus, u_minus);
+            gamma_minus = sycl::sqrt(static_cast<Float>(1.0) + uu_minus * inv_c2);
 
-            Float t_factor = q_prim / gamma_minus;
-            Vec3 h = Vec3::scale(B, t_factor);
+            t_factor = q_prim / gamma_minus;
+            h = Vec3::scale(B, t_factor);
 
-            Float hh = Vec3::dot(h, h);
-            Float s_denom = static_cast<Float>(2.0) / (static_cast<Float>(1.0) + hh);
+            hh = Vec3::dot(h, h);
+            s_denom = static_cast<Float>(2.0) / (static_cast<Float>(1.0) + hh);
             Vec3 s = Vec3::scale(h, s_denom);
 
-            Vec3 u_minus_cross_h = Vec3::cross(u_minus, h);
-            Vec3 u_prim = Vec3::add(u_minus, u_minus_cross_h);
+            u_minus_cross_h = Vec3::cross(u_minus, h);
+            u_prim = Vec3::add(u_minus, u_minus_cross_h); 
 
-            Vec3 u_prim_cross_s = Vec3::cross(u_prim, s);
-            Vec3 u_plus = Vec3::add(u_minus, u_prim_cross_s);
+            u_prim_cross_s = Vec3::cross(u_prim, s);
+            u_plus = Vec3::add(u_minus, u_prim_cross_s);
 
             // C. DRUGI PÓŁ-KROK ELEKTRYCZNY (symetryczny z u_plus)
-            Vec3 impulse2 = Vec3::scale(E, q_prim);
+            impulse2 = Vec3::scale(E, q_prim);
             u = Vec3::add(u_plus, impulse2);
 
             // D. AKTUALIZACJA POZYCJI W PODKROKU
-            Float uu_new = Vec3::dot(u, u);
-            Float gamma_new = sycl::sqrt(static_cast<Float>(1.0) + uu_new * inv_c2);
-            Vec3 v_new = Vec3::scale(u, static_cast<Float>(1.0) / gamma_new);
+            uu_new = Vec3::dot(u, u);
+            gamma_new = sycl::sqrt(static_cast<Float>(1.0) + uu_new * inv_c2);
+            v_new = Vec3::scale(u, static_cast<Float>(1.0) / gamma_new);
 
-            Vec3 v_avg = Vec3::scale(Vec3::add(v_old, v_new), static_cast<Float>(0.5));
+            v_avg = Vec3::scale(Vec3::add(v_old, v_new), static_cast<Float>(0.5));
 
             pos = Vec3::add(pos, Vec3::scale(v_avg, sub_dt));
         }
 
         // --- OSTATECZNE DOMKNIĘCIE KROKU I OCHRONA PRZED C ---
-        Float uu_final = Vec3::dot(u, u);
-        Float gamma_final = sycl::sqrt(static_cast<Float>(1.0) + uu_final * inv_c2);
+        uu_final = Vec3::dot(u, u);
+        gamma_final = sycl::sqrt(static_cast<Float>(1.0) + uu_final * inv_c2);
         vel = Vec3::scale(u, static_cast<Float>(1.0) / gamma_final);
 
         // --- KONIEC ALGORITMU BORISA ---

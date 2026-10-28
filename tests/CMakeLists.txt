@@ -32,6 +32,11 @@ add_executable(picsim_tests
 target_compile_options(picsim_tests PRIVATE -fsycl)
 target_link_options(picsim_tests PRIVATE -fsycl)
 
+# Przekazanie ścieżki źródłowej zasobów do kodu C++ jako makro preprocesora
+target_compile_definitions(picsim_tests PRIVATE 
+    TEST_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+)
+
 # Linkowanie z naszą biblioteką rdzenia oraz GTest
 target_link_libraries(picsim_tests PRIVATE 
     picsim_core 
@@ -40,3 +45,10 @@ target_link_libraries(picsim_tests PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(picsim_tests)
+
+# # Automatyczne kopiowanie zasobów do testów
+# add_custom_command(TARGET picsim_tests POST_BUILD
+#     COMMAND ${CMAKE_COMMAND} -E copy_directory
+#     ${CMAKE_CURRENT_SOURCE_DIR}/assets
+#     $<TARGET_FILE_DIR:picsim_tests>/tests/assets
+# )

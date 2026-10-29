@@ -10,6 +10,7 @@ FetchContent_MakeAvailable(googletest)
 
 # Tworzenie pliku wykonywalnego z testami (np. test_chunk.cpp)
 add_executable(picsim_tests
+    Mesh/test_Msh.cpp
     SimulationSteps/ParticleInjectorStrategy/test_FlatQuadShape.cpp
     SimulationSteps/ParticleInjectorStrategy/test_PointSourceStrategy.cpp
     SimulationSteps/ParticleInjectorStrategy/test_SurfaceSourceStrategy.cpp
@@ -45,10 +46,3 @@ target_link_libraries(picsim_tests PRIVATE
 
 include(GoogleTest)
 gtest_discover_tests(picsim_tests)
-
-# # Automatyczne kopiowanie zasobów do testów
-# add_custom_command(TARGET picsim_tests POST_BUILD
-#     COMMAND ${CMAKE_COMMAND} -E copy_directory
-#     ${CMAKE_CURRENT_SOURCE_DIR}/assets
-#     $<TARGET_FILE_DIR:picsim_tests>/tests/assets
-# )

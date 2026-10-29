@@ -78,6 +78,8 @@ endif()
 # 1. Deklaracja plików nagłówkowych (dla IDE)
 set(HEADERS
     include/Field/ElectromagneticField.hpp
+    include/Mesh/IMesh.hpp
+    include/Mesh/Msh.hpp
     include/SimulationSteps/ParticleInjectorStrategy/FlatQuadeShape.hpp
     include/SimulationSteps/ParticleInjectorStrategy/IParticleInjectorStrategy.hpp
     include/SimulationSteps/ParticleInjectorStrategy/PointSourceStrategy.hpp
@@ -100,6 +102,7 @@ set(HEADERS
 
 # 2. Deklaracja plików źródłowych rdzenia symulacji (BEZ main w Sphere.cpp)
 set(CORE_SOURCES
+    src/Mesh/Msh.cpp
     src/SimulationSteps/ChargeDepositionStep.cpp
     src/SimulationSteps/FieldSolverStep.cpp
     src/SimulationSteps/ParticleColliderStep.cpp

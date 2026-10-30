@@ -7,29 +7,16 @@
 #include "SimulationUtils.hpp"
 #include "Mesh/Msh.hpp"
 
-
-
-struct GridFieldDeviceView {
-    const float* nodes_x;
-    const float* nodes_y;
-    const float* nodes_z;
-    int num_nodes;
-
-    inline bool device_out_of_boundary_check(float x, float y, float z) const { return false; }
-};
-
-
 /// @brief Represents spatial grid fields (e.g., charge density, electric and magnetic fields) for the simulation.
 class GridField
 {
 private:
     sycl::queue &queue_;
     std::unique_ptr<IMesh> mesh_;
-    GridFieldDeviceView device_view_;
+    MeshDeviceView mesh_device_view_;
 
 public:
-    explicit GridField(sycl::queue &q, const std::string& filename = "EMPTY") 
-        : queue_(q), device_view_() 
+    explicit GridField(sycl::queue &q, const std::string& filename = "EMPTY") : queue_(q)
         {
             if(filename != "EMPTY")
             {
@@ -38,7 +25,8 @@ public:
     
                 // Obsługa rozszerzenia .msh
                 if (ext == ".msh") {
-                    mesh_ = std::make_unique<Msh>(filename);
+                    mesh_ = std::make_unique<Msh>(filename, queue_);
+                    // mesh_device_view_ = mesh_->get
                 }
                 
                 // --- TUTAJ W PRZYSŁOŚCI MOŻESZ DODAĆ KOLEJNE FORMATY ---
@@ -54,7 +42,7 @@ public:
     sycl::queue& get_queue() { return queue_; }
 
     /// @brief Zwraca lekki widok urządzenia do przekazania do kernela SYCL
-    GridFieldDeviceView get_device_view() const { return device_view_; }
+    MeshDeviceView get_device_view() const { return mesh_device_view_; }
 
     const std::unique_ptr<IMesh>& get_mesh() const { return mesh_; }
 };

@@ -1,34 +1,136 @@
 #include "Mesh/Msh.hpp"
 
-Msh::Msh(const std::string &filename)
+Msh::Msh(const std::string &filename, sycl::queue& q) : queue_(q)
 {
     load(filename);
+    upload_to_device();
+}
+
+Msh::~Msh()
+{
+    // RAII: Bezpieczne zwolnienie alokacji USM przy niszczeniu obiektu Msh za pomocą wskaźników z widoku.
+    // Używamy const_cast, ponieważ sycl::free wymaga wskaźnika nie-const, a widok trzyma wskaźniki odczytu.
+    if (mesh_device_view.d_nodes)              sycl::free(const_cast<Vector3*>(mesh_device_view.d_nodes), queue_);
+    if (mesh_device_view.d_hexahedra)          sycl::free(const_cast<int*>(mesh_device_view.d_hexahedra), queue_);
+    if (mesh_device_view.d_tetrahedra)         sycl::free(const_cast<int*>(mesh_device_view.d_tetrahedra), queue_);
+    if (mesh_device_view.d_prisms)             sycl::free(const_cast<int*>(mesh_device_view.d_prisms), queue_);
+    if (mesh_device_view.d_pyramids)           sycl::free(const_cast<int*>(mesh_device_view.d_pyramids), queue_);
+    if (mesh_device_view.d_boundary_quads)     sycl::free(const_cast<int*>(mesh_device_view.d_boundary_quads), queue_);
+    if (mesh_device_view.d_boundary_triangles) sycl::free(const_cast<int*>(mesh_device_view.d_boundary_triangles), queue_);
+}
+
+void Msh::upload_to_device()
+{
+    // 1. Alokacja i kopiowanie węzłów
+    if (!nodes.empty()) {
+        mesh_device_view.d_nodes = sycl::malloc_device<Vector3>(nodes.size(), queue_);
+        queue_.copy(nodes.data(), const_cast<Vector3*>(mesh_device_view.d_nodes), nodes.size()).wait();
+        mesh_device_view.num_nodes = nodes.size();
+    }
+
+    // 2. Alokacja i kopiowanie elementów (hexa)
+    if (!elements.hexahedra.empty()) {
+        mesh_device_view.d_hexahedra = sycl::malloc_device<int>(elements.hexahedra.size(), queue_);
+        queue_.copy(elements.hexahedra.data(), const_cast<int*>(mesh_device_view.d_hexahedra), elements.hexahedra.size()).wait();
+        mesh_device_view.num_hexahedra_indices = elements.hexahedra.size();
+    }
+
+    // 3. Alokacja i kopiowanie elementów (tets)
+    if (!elements.tetrahedra.empty()) {
+        mesh_device_view.d_tetrahedra = sycl::malloc_device<int>(elements.tetrahedra.size(), queue_);
+        queue_.copy(elements.tetrahedra.data(), const_cast<int*>(mesh_device_view.d_tetrahedra), elements.tetrahedra.size()).wait();
+        mesh_device_view.num_tetrahedra_indices = elements.tetrahedra.size();
+    }
+
+    // 4. Pozostałe typy (prisms, pyramids, brzegi)...
+    if (!elements.prisms.empty()) {
+        mesh_device_view.d_prisms = sycl::malloc_device<int>(elements.prisms.size(), queue_);
+        queue_.copy(elements.prisms.data(), const_cast<int*>(mesh_device_view.d_prisms), elements.prisms.size()).wait();
+        mesh_device_view.num_prisms_indices = elements.prisms.size();
+    }
+    if (!elements.pyramids.empty()) {
+        mesh_device_view.d_pyramids = sycl::malloc_device<int>(elements.pyramids.size(), queue_);
+        queue_.copy(elements.pyramids.data(), const_cast<int*>(mesh_device_view.d_pyramids), elements.pyramids.size()).wait();
+        mesh_device_view.num_pyramids_indices = elements.pyramids.size();
+    }
+    if (!elements.boundary_quads.empty()) {
+        mesh_device_view.d_boundary_quads = sycl::malloc_device<int>(elements.boundary_quads.size(), queue_);
+        queue_.copy(elements.boundary_quads.data(), const_cast<int*>(mesh_device_view.d_boundary_quads), elements.boundary_quads.size()).wait();
+        mesh_device_view.num_boundary_quads_indices = elements.boundary_quads.size();
+    }
+    if (!elements.boundary_triangles.empty()) {
+        mesh_device_view.d_boundary_triangles = sycl::malloc_device<int>(elements.boundary_triangles.size(), queue_);
+        queue_.copy(elements.boundary_triangles.data(), const_cast<int*>(mesh_device_view.d_boundary_triangles), elements.boundary_triangles.size()).wait();
+        mesh_device_view.num_boundary_triangles_indices = elements.boundary_triangles.size();
+    }
+}
+
+MeshDeviceView Msh::get_device_view() const
+{
+    return mesh_device_view;
 }
 
 size_t Msh::get_node_count() const
 {
-    return nodes.size();
+    return mesh_device_view.num_nodes;
 }
 
-size_t Msh::get_element_count() const
+size_t Msh::get_element_count(ElementType type) const
 {
-    // Since each tetrahedron consists of exactly 4 nodes
-    return 0; // elements.size();
+    switch (type) {
+        case ElementType::Tetrahedron:
+            return mesh_device_view.num_tetrahedra_indices / 4;       // 4 indeksy na czworościan
+        case ElementType::Hexahedron:
+            return mesh_device_view.num_hexahedra_indices / 8;        // 8 indeksów na heksaedr
+        case ElementType::Prism:
+            return mesh_device_view.num_prisms_indices / 6;           // 6 indeksów na pryzmę
+        case ElementType::Pyramid:
+            return mesh_device_view.num_pyramids_indices / 5;         // 5 indeksów na piramidę
+        case ElementType::BoundaryQuad:
+            return mesh_device_view.num_boundary_quads_indices / 4;   // 4 indeksy na czworokąt brzegowy
+        case ElementType::BoundaryTriangle:
+            return mesh_device_view.num_boundary_triangles_indices / 3; // 3 indeksy na trójkąt brzegowy
+        default:
+            return 0;
+    }
 }
 
 const Vector3 *Msh::get_nodes_data() const
 {
-    return nodes.data();
+    return mesh_device_view.d_nodes;
 }
 
-const std::vector<int> *Msh::get_elements_data() const
+const int* Msh::get_elements_data(ElementType type) const
 {
-    return nullptr; // elements.data();
+    switch (type) {
+        case ElementType::Tetrahedron:
+            return mesh_device_view.d_tetrahedra;
+        case ElementType::Hexahedron:
+            return mesh_device_view.d_hexahedra;
+        case ElementType::Prism:
+            return mesh_device_view.d_prisms;
+        case ElementType::Pyramid:
+            return mesh_device_view.d_pyramids;
+        case ElementType::BoundaryQuad:
+            return mesh_device_view.d_boundary_quads;
+        case ElementType::BoundaryTriangle:
+            return mesh_device_view.d_boundary_triangles;
+        default:
+            return nullptr;
+    }
 }
 
-int Msh::get_nodes_per_element(size_t element_index) const
+int Msh::get_nodes_per_element(ElementType type) const
 {
-    return 0; // elements.at(element_index).size(); // Tetrahedra
+    switch (type) {
+        case ElementType::Tetrahedron:      return 4;
+        case ElementType::Hexahedron:       return 8;
+        case ElementType::Prism:            return 6;
+        case ElementType::Pyramid:          return 5;
+        case ElementType::BoundaryQuad:     return 4;
+        case ElementType::BoundaryTriangle: return 3;
+        default:                            return 0;
+    }
 }
 
 void Msh::load(const std::string &filename)
@@ -102,17 +204,17 @@ void Msh::load_msh_v4_ascii(const std::string &filename)
 
     file.close();
     // Obliczamy liczbę elementów 3D na podstawie rozmiarów płaskich wektorów i ich stride'ów
-    size_t total_3d_elements = (elements_.tetrahedra.size() / 4) +
-                               (elements_.hexahedra.size() / 8) +
-                               (elements_.prisms.size() / 6) +
-                               (elements_.pyramids.size() / 5);
+    size_t total_3d_elements = (elements.tetrahedra.size() / 4) +
+                               (elements.hexahedra.size() / 8) +
+                               (elements.prisms.size() / 6) +
+                               (elements.pyramids.size() / 5);
 
     std::cout << "[Mesh] Successfully loaded MSH v4.1 -> Nodes: " << nodes.size()
               << ", 3D Elements Total: " << total_3d_elements
-              << " (Tets: " << elements_.tetrahedra.size() / 4
-              << ", Hexes: " << elements_.hexahedra.size() / 8
-              << ", Prisms: " << elements_.prisms.size() / 6
-              << ", Pyramids: " << elements_.pyramids.size() / 5 << ")"
+              << " (Tets: " << elements.tetrahedra.size() / 4
+              << ", Hexes: " << elements.hexahedra.size() / 8
+              << ", Prisms: " << elements.prisms.size() / 6
+              << ", Pyramids: " << elements.pyramids.size() / 5 << ")"
               << ", Entities: " << entities.size() << "\n";
 }
 
@@ -568,12 +670,12 @@ void Msh::parse_elements(std::ifstream& file)
             // Zapis do odpowiedniego płaskiego wektora.
             switch (elementType)
             {
-                case 4: elements_.tetrahedra.insert( elements_.tetrahedra.end(), elemNodes.begin(), elemNodes.begin() + 4); break;
-                case 5: elements_.hexahedra.insert( elements_.hexahedra.end(), elemNodes.begin(), elemNodes.begin() + 8); break;
-                case 6: elements_.prisms.insert( elements_.prisms.end(), elemNodes.begin(), elemNodes.begin() + 6); break;
-                case 7: elements_.pyramids.insert( elements_.pyramids.end(), elemNodes.begin(), elemNodes.begin() + 5); break;
-                case 2: elements_.boundary_triangles.insert( elements_.boundary_triangles.end(), elemNodes.begin(), elemNodes.begin() + 3); break;
-                case 3: elements_.boundary_quads.insert( elements_.boundary_quads.end(), elemNodes.begin(), elemNodes.begin() + 4); break;
+                case 4: elements.tetrahedra.insert( elements.tetrahedra.end(), elemNodes.begin(), elemNodes.begin() + 4); break;
+                case 5: elements.hexahedra.insert( elements.hexahedra.end(), elemNodes.begin(), elemNodes.begin() + 8); break;
+                case 6: elements.prisms.insert( elements.prisms.end(), elemNodes.begin(), elemNodes.begin() + 6); break;
+                case 7: elements.pyramids.insert( elements.pyramids.end(), elemNodes.begin(), elemNodes.begin() + 5); break;
+                case 2: elements.boundary_triangles.insert( elements.boundary_triangles.end(), elemNodes.begin(), elemNodes.begin() + 3); break;
+                case 3: elements.boundary_quads.insert( elements.boundary_quads.end(), elemNodes.begin(), elemNodes.begin() + 4); break;
                 // Typy 1 i 15 są odczytywane, ale nie przechowujemy
                 // ich w strukturach elementów domenowych.
                 case 1:

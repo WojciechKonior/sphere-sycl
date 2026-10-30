@@ -48,7 +48,7 @@ TEST_F(MshTest, DynamicFileParityVerificationForHexahedronAndTetrahedronMsh) {
             << "Brak pliku siatki pod ścieżką: " << std::filesystem::absolute(filepath);
     
         // 1. Wczytujemy siatkę za pomocą naszej klasy
-        Msh mesh(filepath);
+        Msh mesh(filepath, queue);
     
         // 2. Otwieramy ten sam plik bezpośrednio w teście do weryfikacji na żywo
         std::ifstream file(filepath);
@@ -225,29 +225,28 @@ TEST_F(MshTest, DynamicFileParityVerificationForHexahedronAndTetrahedronMsh) {
                             }
                         }
     
-                        EXPECT_TRUE(found) << "Błąd: Element typu [" << type_name 
-                                           << "] nie został odnaleziony w strukturze elements_!";
+                        EXPECT_TRUE(found) << "Błąd: Element typu [" << type_name  << "] nie został odnaleziony w strukturze elements!";
                     }
                 };
     
                 // Weryfikujemy każdą wykrytą grupę w strukturze elements_
                 if (file_elements_by_type.count(4)) {
-                    verify_group(file_elements_by_type[4], mesh.elements_.tetrahedra, 4, "Tetrahedron");
+                    verify_group(file_elements_by_type[4], mesh.elements.tetrahedra, 4, "Tetrahedron");
                 }
                 if (file_elements_by_type.count(5)) {
-                    verify_group(file_elements_by_type[5], mesh.elements_.hexahedra, 8, "Hexahedron");
+                    verify_group(file_elements_by_type[5], mesh.elements.hexahedra, 8, "Hexahedron");
                 }
                 if (file_elements_by_type.count(6)) {
-                    verify_group(file_elements_by_type[6], mesh.elements_.prisms, 6, "Prism");
+                    verify_group(file_elements_by_type[6], mesh.elements.prisms, 6, "Prism");
                 }
                 if (file_elements_by_type.count(7)) {
-                    verify_group(file_elements_by_type[7], mesh.elements_.pyramids, 5, "Pyramid");
+                    verify_group(file_elements_by_type[7], mesh.elements.pyramids, 5, "Pyramid");
                 }
                 if (file_elements_by_type.count(2)) {
-                    verify_group(file_elements_by_type[2], mesh.elements_.boundary_triangles, 3, "Boundary Triangle");
+                    verify_group(file_elements_by_type[2], mesh.elements.boundary_triangles, 3, "Boundary Triangle");
                 }
                 if (file_elements_by_type.count(3)) {
-                    verify_group(file_elements_by_type[3], mesh.elements_.boundary_quads, 4, "Boundary Quadrangle");
+                    verify_group(file_elements_by_type[3], mesh.elements.boundary_quads, 4, "Boundary Quadrangle");
                 }
             }
         }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <vector>
+#include <array>
 #include "SimulationUtils.hpp"
 
 /**
@@ -26,28 +27,35 @@ struct MeshEntity {
  * optimized for flat memory layout and GPU execution.
  */
 struct Elements {
-    // --- Elementy objętościowe 3D (dla domeny symulacji) ---
-    std::vector<int> tetrahedra;    // Spakowane czworościany (stride = 4)
-    std::vector<int> hexahedra;     // Spakowane sześciany (stride = 8)
-    std::vector<int> prisms;        // Spakowane graniastosłupy trójkątne (stride = 6)
-    std::vector<int> pyramids;      // Spakowane ostrosłupy (stride = 5)
+private:
+    std::array<std::vector<int>, static_cast<size_t>(ElementType::SIZE)> data;
 
-    // --- Elementy powierzchniowe 2D (przydatne do warunków brzegowych) ---
-    std::vector<int> boundary_triangles; // Trójkąty brzegowe (stride = 3)
-    std::vector<int> boundary_quads;     // Czworokąty brzegowe (stride = 4)
+public:
+    /// @brief Accesses the element vector for a given ElementType.
+    std::vector<int>& at(ElementType type) {
+        return data[type.to_index()];
+    }
+    const std::vector<int>& at(ElementType type) const {
+        return data[type.to_index()];
+    }
+
+    /// @brief Accesses the element vector using a raw Gmsh integer ID.
+    std::vector<int>& at(int raw_gmsh_id) {
+        return data[ElementType(raw_gmsh_id).to_index()];
+    }
+    const std::vector<int>& at(int raw_gmsh_id) const {
+        return data[ElementType(raw_gmsh_id).to_index()];
+    }
 };
 
 /**
- * @brief Represents a list of handled element types.
+ * @brief A lightweight device view struct for handling a specific group of mesh elements on the GPU.
  */
-enum class ElementType
-{
-    Tetrahedron,
-    Hexahedron,
-    Prism,
-    Pyramid,
-    BoundaryQuad,
-    BoundaryTriangle
+struct ElementsDeviceView {
+    const int* indices = nullptr;         ///< Pointer to element node indices allocated on the device memory.
+    size_t num_indices = 0;             ///< Total number of indices stored in the indices array.
+    size_t nodes_per_element = 0;       ///< Number of nodes defining a single element (e.g., 4 for tetrahedra).
+    ElementType type;                   ///< The geometrical element type of this group.
 };
 
 /**
@@ -57,24 +65,29 @@ struct MeshDeviceView {
     const Vector3* d_nodes = nullptr;
     size_t num_nodes = 0;
 
-    const int* d_hexahedra = nullptr;
-    size_t num_hexahedra_indices = 0; // rozmiar wektora (liczba elementów * 8)
+    std::array<ElementsDeviceView, ElementType::SIZE> d_elements;
 
-    const int* d_tetrahedra = nullptr;
-    size_t num_tetrahedra_indices = 0; // rozmiar wektora (liczba elementów * 4)
+    /// @brief Accesses the ElementsDeviceView for a given ElementType.
+    ElementsDeviceView& elements_at(ElementType type) {
+        return d_elements[type.to_index()];
+    }
+    
+    /// @brief Accesses the ElementsDeviceView for a given ElementType (const version).
+    const ElementsDeviceView& elements_at(ElementType type) const {
+        return d_elements[type.to_index()];
+    }
 
-    const int* d_prisms = nullptr;
-    size_t num_prisms_indices = 0;
+    /// @brief Accesses the ElementsDeviceView using a raw Gmsh integer ID.
+    ElementsDeviceView& elements_at(int raw_gmsh_id) {
+        return d_elements[ElementType(raw_gmsh_id).to_index()];
+    }
+    
+    /// @brief Accesses the ElementsDeviceView using a raw Gmsh integer ID (const version).
+    const ElementsDeviceView& elements_at(int raw_gmsh_id) const {
+        return d_elements[ElementType(raw_gmsh_id).to_index()];
+    }
 
-    const int* d_pyramids = nullptr;
-    size_t num_pyramids_indices = 0;
-
-    const int* d_boundary_quads = nullptr;
-    size_t num_boundary_quads_indices = 0;
-
-    const int* d_boundary_triangles = nullptr;
-    size_t num_boundary_triangles_indices = 0;
-
+    /// @brief Return true if (x,y,z) point is out of boundary.
     inline bool device_out_of_boundary_check(auto x, auto y, auto z) const { return false; }
 };
 
@@ -91,7 +104,7 @@ struct IMesh{
     virtual const Vector3* get_nodes_data() const = 0;
     
     /// @brief Returns a raw pointer to the flattened, packed array of element node indices 
-    virtual const int* get_elements_data(ElementType type) const = 0;
+    virtual const ElementsDeviceView& get_elements_data(ElementType type) const = 0;
 
     /// @brief Returns the fixed number of nodes per element (e.g., 4 for tetrahedra).
     virtual int get_nodes_per_element(ElementType type) const = 0;

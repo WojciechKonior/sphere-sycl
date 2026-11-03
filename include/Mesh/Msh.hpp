@@ -12,7 +12,7 @@ class Msh : public IMesh {
 
 public:
     std::vector<Vector3> nodes;                  ///< List of mesh nodes (coordinates)
-    Elements elements;                          ///< Struct of lists of 3D elements
+    Elements elements;                           ///< Struct of lists of 3D elements
     std::vector<MeshEntity> entities;            ///< List of mesh geometric entities
 
     /// @brief Construct a new Mesh object from a given file.
@@ -29,7 +29,7 @@ public:
     const Vector3* get_nodes_data() const override ;
 
     /// @brief Returns a pointer to the flattened, packed array of element node indices.
-    const int* get_elements_data(ElementType type) const override ;
+    const ElementsDeviceView& get_elements_data(ElementType type) const override ;
 
     /// @brief Returns the fixed number of nodes per element (4 for tetrahedra).
     int get_nodes_per_element(ElementType type) const override ;

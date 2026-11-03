@@ -10,6 +10,7 @@ FetchContent_MakeAvailable(googletest)
 
 # Tworzenie pliku wykonywalnego z testami (np. test_chunk.cpp)
 add_executable(picsim_tests
+    Mesh/test_Msh.cpp
     SimulationSteps/ParticleInjectorStrategy/test_FlatQuadShape.cpp
     SimulationSteps/ParticleInjectorStrategy/test_PointSourceStrategy.cpp
     SimulationSteps/ParticleInjectorStrategy/test_SurfaceSourceStrategy.cpp
@@ -31,6 +32,11 @@ add_executable(picsim_tests
 # Wymuszenie flag SYCL dla celu testowego
 target_compile_options(picsim_tests PRIVATE -fsycl)
 target_link_options(picsim_tests PRIVATE -fsycl)
+
+# Przekazanie ścieżki źródłowej zasobów do kodu C++ jako makro preprocesora
+target_compile_definitions(picsim_tests PRIVATE 
+    TEST_ASSETS_DIR="${CMAKE_CURRENT_SOURCE_DIR}/assets"
+)
 
 # Linkowanie z naszą biblioteką rdzenia oraz GTest
 target_link_libraries(picsim_tests PRIVATE 

@@ -31,6 +31,74 @@ namespace SimulationUtils {
     
     }
 
+    /**
+     * @brief Represents a robust wrapper for mesh element types, matching Gmsh IDs.
+     */
+    struct ElementType {
+        /// @brief Underlying enumeration of supported element types and their standard Gmsh integer IDs.
+        enum Value : int {
+            Uninitialized    = 0, ///< Uninitialized or invalid element state.
+            BoundaryTriangle = 2, ///< Boundary triangle element (Gmsh ID 2).
+            BoundaryQuad     = 3, ///< Boundary quadrilateral element (Gmsh ID 3).
+            Tetrahedron      = 4, ///< 3D tetrahedral element (Gmsh ID 4).
+            Hexahedron       = 5, ///< 3D hexahedral element (Gmsh ID 5).
+            Prism            = 6, ///< 3D wedge/prism element (Gmsh ID 6).
+            Pyramid          = 7  ///< 3D pyramidal element (Gmsh ID 7).
+        };
+
+        Value val; ///< The active value of the element type.
+
+        static constexpr size_t SIZE = 6;                                    ///< Total number of supported element types.
+        static constexpr size_t FRONT = static_cast<size_t>(Value::BoundaryTriangle); ///< First valid raw element ID.
+        static constexpr size_t BACK = FRONT + SIZE - 1;                     ///< Last valid raw element ID.
+
+        /// @brief Compile-time array containing all valid element types for clean iteration.
+        static constexpr std::array<Value, SIZE> ALL = []() constexpr {
+            std::array<Value, SIZE> arr{};
+            for (size_t i = 0; i < SIZE; ++i) {
+                arr[i] = static_cast<Value>(FRONT + i);
+            }
+            return arr;
+        }();
+
+        /// @brief Default constructor initializing to Uninitialized state.
+        constexpr ElementType() : val(Uninitialized) {}
+
+        /// @brief Constructs an ElementType from the underlying enum Value.
+        constexpr ElementType(Value v) : val(v) {}
+
+        /// @brief Constructs an ElementType from a raw integer ID (e.g., from Gmsh).
+        constexpr ElementType(int raw_id) : val(static_cast<Value>(raw_id)) {}
+
+        /// @brief Implicit conversion operator to the underlying enum Value.
+        constexpr operator Value() const { return val; }
+
+        /// @brief Safely maps the element type to a zero-based array index [0, SIZE-1].
+        /// @return The corresponding array index.
+        /// @throws std::out_of_range if the element type is invalid or uninitialized.
+        constexpr size_t to_index() const {
+            int raw = static_cast<int>(val);
+            if (raw < FRONT || raw > BACK) {
+                throw std::out_of_range("Unknown or uninitialized ElementType!");
+            }
+            return static_cast<size_t>(raw - FRONT);
+        }
+
+        /// @brief Returns the number of nodes per element for the current type.
+        /// @return Number of nodes (e.g., 8 for Hexahedron, 0 for Uninitialized).
+        constexpr int get_num_nodes_per_element() const {
+            switch (val) {
+                case BoundaryTriangle: return 3;
+                case BoundaryQuad:     return 4;
+                case Tetrahedron:      return 4;
+                case Hexahedron:       return 8;
+                case Prism:            return 6;
+                case Pyramid:          return 5;
+                default: return 0;
+            }
+        }
+    };
+
     /// @brief Generates a high-quality pseudorandom float in [0, 1) using PCG Hash.
     /// @param seed Unique global identifier (e.g., global particle index).
     /// @param salt Salt or dimension discriminator (e.g., 1 for radius, 2 for theta, etc.).

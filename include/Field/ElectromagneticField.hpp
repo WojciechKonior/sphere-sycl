@@ -8,7 +8,7 @@ struct ElectromagneticField {
      */
     template <typename Float>
     requires std::floating_point<Float>
-    inline void device_sample(Vec3<Float> pos, Vec3<Float>& E, Vec3<Float>& B) const {
+    inline void device_sample(const Vec3<Float> &pos, Vec3<Float>& E, Vec3<Float>& B) const {
         // Docelowo: interpolacja z węzłów siatki FDTD (np. Yee lattice)
         E.x = static_cast<Float>(0.0f);
         E.y = static_cast<Float>(0.0f);

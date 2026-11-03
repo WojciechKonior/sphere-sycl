@@ -36,7 +36,7 @@ struct MockElectromagneticField {
 
     template <typename Float>
     requires std::floating_point<Float>
-    inline void device_sample(Vec3<Float> pos, Vec3<Float>& E, Vec3<Float>& B) const {
+    inline void device_sample(const Vec3<Float> &pos, Vec3<Float>& E, Vec3<Float>& B) const {
         E.x = static_cast<Float>(Ex_val); 
         E.y = static_cast<Float>(Ey_val); 
         E.z = static_cast<Float>(Ez_val);
@@ -1568,4 +1568,203 @@ TEST_F(BorisPusherStrategyTest, HydrogenIonPerpendicularMagneticFieldHistoryBuff
             << "step=" << step
             << ", radius=" << current_radius;
     }
+}
+
+
+/** 
+ * @brief Testuje ruch neutralnego wodoru (HYDROGEN_NEUTRAL) w zerowym polu magnetycznym i elektrycznym. 
+ * Oczekiwany wynik: brak siły Lorentza (q = 0 oraz E=0, B=0), cząstka porusza się ze stałą prędkością po linii prostej, 
+ * a zarejestrowana historia pozycji liniowo odzwierciedla przebieg ruchu. 
+ */ 
+TEST_F(BorisPusherStrategyTest, NeutralHydrogenZeroFieldTrajectoryTest) { 
+    // 1. Konfiguracja fizyczna 
+    float dt = 1e-11f; // 10 pikosekund 
+    // Ładunek i masa neutralnego wodoru (ładunek wynosi 0) 
+    constexpr float q_h = static_cast<float>(Constants::CHARGE_NEUTRAL); // 0.0f
+    constexpr float m_h = static_cast<float>(Constants::MASS_HYDROGEN); 
+    float q_over_m = q_h / m_h; // równe 0.0f
+
+    // 2. Przygotowanie chunku na 1 cząstkę 
+    Chunk chunk(queue_, 1); 
+    chunk.set_count(1); 
+    ChunkSoAView view = chunk.get_view(); 
+
+    // Inicjalizacja pozycji początkowej (0, 0, 0) oraz prędkości początkowej (np. v_x = 500 m/s) 
+    std::vector<float> h_px = {0.0f}; 
+    std::vector<float> h_py = {0.0f}; 
+    std::vector<float> h_pz = {0.0f}; 
+    std::vector<float> h_vx = {500.0f}; // Prędkość wzdłuż osi X 
+    std::vector<float> h_vy = {0.0f}; 
+    std::vector<float> h_vz = {0.0f}; 
+
+    queue_.memcpy(view.px, h_px.data(), sizeof(float)).wait(); 
+    queue_.memcpy(view.py, h_py.data(), sizeof(float)).wait(); 
+    queue_.memcpy(view.pz, h_pz.data(), sizeof(float)).wait(); 
+    queue_.memcpy(view.vx, h_vx.data(), sizeof(float)).wait(); 
+    queue_.memcpy(view.vy, h_vy.data(), sizeof(float)).wait(); 
+    queue_.memcpy(view.vz, h_vz.data(), sizeof(float)).wait(); 
+
+    // 3. Konfiguracja siatki i strategii Borisa z zerowym polem (E=0, B=0) 
+    MockGridField mock_grid(queue_); 
+    
+    BorisPusherStrategy<MockElectromagneticField> pusher; 
+    auto pusher_view = reinterpret_cast<BorisPusherStrategyView*>(&pusher); 
+    // Zerowe pole elektromagnetyczne (Ex, Ey, Ez, Bx, By, Bz)
+    pusher_view->field_policy_ = {0.0f, 0.0f, 0.0f, 0.0f, 0.0f, 0.0f}; 
+
+    int num_steps = 50; 
+    
+    // Kontenery na historię drogi cząstki (rejestrowana w każdym kroku)
+    std::vector<float> trajectory_px;
+    std::vector<float> trajectory_py;
+    std::vector<float> trajectory_pz;
+    trajectory_px.reserve(num_steps);
+    trajectory_py.reserve(num_steps);
+    trajectory_pz.reserve(num_steps);
+
+    float current_x = 0.0f;
+
+    for (int step = 0; step < num_steps; ++step) { 
+        queue_.submit([&](sycl::handler &cgh) { 
+            pusher.push(view, dt, q_over_m, reinterpret_cast<GridField&>(mock_grid), cgh); 
+        }).wait(); 
+
+        // Rejestracja aktualnej pozycji z GPU do historii w każdym kroku
+        float step_px = 0.0f;
+        float step_py = 0.0f;
+        float step_pz = 0.0f;
+
+        queue_.memcpy(&step_px, view.px, sizeof(float)).wait(); 
+        queue_.memcpy(&step_py, view.py, sizeof(float)).wait(); 
+        queue_.memcpy(&step_pz, view.pz, sizeof(float)).wait(); 
+
+        trajectory_px.push_back(step_px);
+        trajectory_py.push_back(step_py);
+        trajectory_pz.push_back(step_pz);
+    } 
+
+    // 4. Pobranie końcowych prędkości z GPU na host 
+    std::vector<float> final_vx(1); 
+    std::vector<float> final_vy(1); 
+    std::vector<float> final_vz(1); 
+
+    queue_.memcpy(final_vx.data(), view.vx, sizeof(float)).wait(); 
+    queue_.memcpy(final_vy.data(), view.vy, sizeof(float)).wait(); 
+    queue_.memcpy(final_vz.data(), view.vz, sizeof(float)).wait(); 
+
+    // 5. Asercje fizyczne i weryfikacja historii ruchu
+    // A. Prędkości nie powinny ulec żadnej zmianie (brak sił)
+    EXPECT_NEAR(final_vx[0], 500.0f, 1e-5f); 
+    EXPECT_NEAR(final_vy[0], 0.0f, 1e-5f); 
+    EXPECT_NEAR(final_vz[0], 0.0f, 1e-5f); 
+
+    // B. Weryfikacja zarejestrowanej historii drogi (czy ruch wzdłuż osi X jest liniowy i poprawny)
+    for (int step = 0; step < num_steps; ++step) { 
+        float expected_x_at_step = 500.0f * ((step + 1) * dt);
+        EXPECT_NEAR(trajectory_px[step], expected_x_at_step, 1e-4f);
+        EXPECT_NEAR(trajectory_py[step], 0.0f, 1e-5f);
+        EXPECT_NEAR(trajectory_pz[step], 0.0f, 1e-5f);
+    } 
+}
+
+/** 
+ * @brief Testuje zachowanie neutralnego wodoru (HYDROGEN_NEUTRAL) w niezerowym polu elektrycznym i magnetycznym. 
+ * Oczekiwany wynik: cząstka ma zerowy ładunek (q = 0), więc niezależnie od obecności pól E i B, siła Lorentza wynosi 0. 
+ * Ruch powinien być jednostajny prostoliniowy, co weryfikuje pełna historia pozycji i prędkości w każdej składowej. 
+ */ 
+TEST_F(BorisPusherStrategyTest, NeutralHydrogenElectromagneticFieldTrajectoryTest) { 
+    // 1. Konfiguracja fizyczna 
+    float dt = 1e-11f; // 10 pikosekund 
+    // Ładunek i masa neutralnego wodoru (ładunek wynosi 0) 
+    constexpr float q_h = static_cast<float>(Constants::CHARGE_NEUTRAL); // 0.0f
+    constexpr float m_h = static_cast<float>(Constants::MASS_HYDROGEN); 
+    float q_over_m = q_h / m_h; // równe 0.0f
+
+    // 2. Przygotowanie chunku na 1 cząstkę 
+    Chunk chunk(queue_, 1); 
+    chunk.set_count(1); 
+    ChunkSoAView view = chunk.get_view(); 
+
+    // Inicjalizacja pozycji początkowej (0, 0, 0) oraz prędkości początkowej skośnej (wzbudzenie w 3 osiach: v_x, v_y, v_z) 
+    std::vector<float> h_px = {0.0f}; 
+    std::vector<float> h_py = {0.0f}; 
+    std::vector<float> h_pz = {0.0f}; 
+    std::vector<float> h_vx = {300.0f}; // Prędkość początkowa w osi X 
+    std::vector<float> h_vy = {400.0f}; // Prędkość początkowa w osi Y 
+    std::vector<float> h_vz = {500.0f}; // Prędkość początkowa w osi Z 
+
+    queue_.memcpy(view.px, h_px.data(), sizeof(float)).wait(); 
+    queue_.memcpy(view.py, h_py.data(), sizeof(float)).wait(); 
+    queue_.memcpy(view.pz, h_pz.data(), sizeof(float)).wait(); 
+    queue_.memcpy(view.vx, h_vx.data(), sizeof(float)).wait(); 
+    queue_.memcpy(view.vy, h_vy.data(), sizeof(float)).wait(); 
+    queue_.memcpy(view.vz, h_vz.data(), sizeof(float)).wait(); 
+
+    // 3. Konfiguracja siatki i strategii Borisa z NIEZEROWYM polem elektromagnetycznym 
+    MockGridField mock_grid(queue_); 
+    
+    BorisPusherStrategy<MockElectromagneticField> pusher; 
+    auto pusher_view = reinterpret_cast<BorisPusherStrategyView*>(&pusher); 
+    
+    // Ustawienie silnych pól elektrycznych i magnetycznych (Ex, Ey, Ez, Bx, By, Bz)
+    // Ponieważ ładunek q = 0, pola te nie powinny w żaden sposób wpłynąć na cząstkę.
+    pusher_view->field_policy_ = {1e5f, 2e5f, 3e5f,  // Pole elektryczne [V/m]
+                                  0.5f, 1.0f, 1.5f}; // Pole magnetyczne [Tesla] 
+
+    int num_steps = 50; 
+    
+    // Kontenery na pełną historię drogi cząstki (rejestrowana dla wszystkich składowych w każdym kroku)
+    std::vector<float> history_px;
+    std::vector<float> history_py;
+    std::vector<float> history_pz;
+    history_px.reserve(num_steps);
+    history_py.reserve(num_steps);
+    history_pz.reserve(num_steps);
+
+    for (int step = 0; step < num_steps; ++step) { 
+        queue_.submit([&](sycl::handler &cgh) { 
+            pusher.push(view, dt, q_over_m, reinterpret_cast<GridField&>(mock_grid), cgh); 
+        }).wait(); 
+
+        // Rejestracja aktualnego stanu pozycji z GPU do historii w każdym kroku
+        float current_px = 0.0f;
+        float current_py = 0.0f;
+        float current_pz = 0.0f;
+
+        queue_.memcpy(&current_px, view.px, sizeof(float)).wait(); 
+        queue_.memcpy(&current_py, view.py, sizeof(float)).wait(); 
+        queue_.memcpy(&current_pz, view.pz, sizeof(float)).wait(); 
+
+        history_px.push_back(current_px);
+        history_py.push_back(current_py);
+        history_pz.push_back(current_pz);
+    } 
+
+    // 4. Pobranie końcowych prędkości z GPU na host 
+    std::vector<float> final_vx(1); 
+    std::vector<float> final_vy(1); 
+    std::vector<float> final_vz(1); 
+
+    queue_.memcpy(final_vx.data(), view.vx, sizeof(float)).wait(); 
+    queue_.memcpy(final_vy.data(), view.vy, sizeof(float)).wait(); 
+    queue_.memcpy(final_vz.data(), view.vz, sizeof(float)).wait(); 
+
+    // 5. Asercje fizyczne i weryfikacja całej historii ruchu oraz składowych
+    // A. Składowe prędkości nie powinny ulec żadnej zmianie (brak przyspieszenia ze względu na q = 0)
+    EXPECT_NEAR(final_vx[0], 300.0f, 1e-5f); 
+    EXPECT_NEAR(final_vy[0], 400.0f, 1e-5f); 
+    EXPECT_NEAR(final_vz[0], 500.0f, 1e-5f); 
+
+    // B. Weryfikacja pełnej historii trajektorii dla każdej składowej przestrzennej (x, y, z) krok po kroku
+    for (int step = 0; step < num_steps; ++step) { 
+        float t = (step + 1) * dt;
+        
+        float expected_x = 300.0f * t;
+        float expected_y = 400.0f * t;
+        float expected_z = 500.0f * t;
+
+        EXPECT_NEAR(history_px[step], expected_x, 1e-4f);
+        EXPECT_NEAR(history_py[step], expected_y, 1e-4f);
+        EXPECT_NEAR(history_pz[step], expected_z, 1e-4f);
+    } 
 }

@@ -17,6 +17,10 @@ public:
 
     /// @brief Construct a new Mesh object from a given file.
     explicit Msh(const std::string& filename, sycl::queue& q);
+
+    /// @brief Konstruktor syntetyczny do testów jednostkowych (inicjalizacja z pamięci hosta).
+    Msh(std::vector<Vector3>&& h_nodes, Elements&& h_elements, sycl::queue& q);
+    
     ~Msh() override;
 
     /// @brief Returns the total number of nodes in the mesh.
@@ -40,7 +44,7 @@ public:
 private:
     /// @brief Central dispatcher method. Responsible for identifying the file type and routing it to the appropriate parser.
     void load(const std::string& filename);
-    
+
     /// @brief Inspects the header of the mesh file to verify if it's MSH v4 ASCII.
     bool is_msh_v4_ascii(const std::string& filename);
     
@@ -58,4 +62,7 @@ private:
     
     /// @brief Allocates USM device memory and copies mesh data from host to GPU.
     void upload_to_device();
+
+    /// @brief Allocates USM device memory and computes volume for each element on GPU.
+    void compute_element_volumes();
 };

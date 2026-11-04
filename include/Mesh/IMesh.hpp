@@ -52,19 +52,28 @@ public:
  * @brief A lightweight device view struct for handling a specific group of mesh elements on the GPU.
  */
 struct ElementsDeviceView {
-    const int* indices = nullptr;         ///< Pointer to element node indices allocated on the device memory.
-    size_t num_indices = 0;             ///< Total number of indices stored in the indices array.
-    size_t nodes_per_element = 0;       ///< Number of nodes defining a single element (e.g., 4 for tetrahedra).
-    ElementType type;                   ///< The geometrical element type of this group.
+    const int* indices = nullptr;           ///< Pointer to element node indices allocated on the device memory.
+    size_t num_indices = 0;                 ///< Total number of indices stored in the indices array.
+
+    const float* volumes = nullptr;         ///< The volume for each element in this group.
+
+    ElementType type;                       ///< The geometrical element type of this group.
+    size_t nodes_per_element = 0;           ///< Number of nodes defining a single element (e.g., 4 for tetrahedra).
+};
+
+/**
+ * @brief A lightweight device view struct for handling a nodes data on the GPU.
+ */
+struct NodesDeviceView {
+    const Vector3* nodes = nullptr;
+    size_t num_nodes = 0;
 };
 
 /**
  * @brief A lightweight struct for handling mesh data on gpu.
  */
 struct MeshDeviceView {
-    const Vector3* d_nodes = nullptr;
-    size_t num_nodes = 0;
-
+    NodesDeviceView d_nodes;
     std::array<ElementsDeviceView, ElementType::SIZE> d_elements;
 
     /// @brief Accesses the ElementsDeviceView for a given ElementType.

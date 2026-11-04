@@ -331,11 +331,11 @@ TEST_F(MshTest, DynamicDeviceViewParityVerification) {
                 size_t numEntityBlocks, numNodes, minNodeTag, maxNodeTag;
                 file >> numEntityBlocks >> numNodes >> minNodeTag >> maxNodeTag;
                 
-                ASSERT_EQ(dev_view.num_nodes, numNodes);
+                ASSERT_EQ(dev_view.d_nodes.num_nodes, numNodes);
 
                 // Kopiujemy węzły z pamięci urządzeniowej (USM) z powrotem na hosta do weryfikacji
                 std::vector<Vector3> h_nodes_from_device(numNodes);
-                queue.copy(dev_view.d_nodes, h_nodes_from_device.data(), numNodes).wait();
+                queue.copy(dev_view.d_nodes.nodes, h_nodes_from_device.data(), numNodes).wait();
     
                 for (size_t b = 0; b < numEntityBlocks; ++b) {
                     int entityDim, entityTag, parametric, numNodesInBlock;
@@ -470,4 +470,221 @@ TEST_F(MshTest, DynamicDeviceViewParityVerification) {
         
         std::cout << "[Test Sukces] Weryfikacja widoku urządzenia (GPU) zakończona pomyślnie dla: " << filepath << "\n";
     }
+}
+
+/**
+ * @test Verifies that the GPU volume/area computation kernel correctly calculates 
+ * analytical volumes and surface areas for a synthetic, hardcoded mesh containing 
+ * exactly one element of each supported type.
+ */
+TEST_F(MshTest, SyntheticMeshElementsVolumeVerification) {
+    // 1. Tworzymy fikcyjną listę węzłów (Nodes) w przestrzeni 3D.
+    // Musimy zgromadzić wystarczającą liczbę unikalnych węzłów dla wszystkich 6 typów elementów.
+    // Przyjmijmy współrzędne tak, aby każdy element miał np. długość krawędzi 1.0.
+    std::vector<Vector3> synthetic_nodes = {
+        // --- Tetrahedron nodes (4 nodes) ---
+        {0.0f, 0.0f, 0.0f}, // 0
+        {1.0f, 0.0f, 0.0f}, // 1
+        {0.0f, 1.0f, 0.0f}, // 2
+        {0.0f, 0.0f, 1.0f}, // 3  -> Objętość = 1/6 * 1.0 * 1.0 * 1.0 = 1.0 / 6.0 ≈ 0.1666667
+
+        // --- Hexahedron nodes (8 nodes) ---
+        {0.0f, 0.0f, 0.0f}, // 4
+        {1.0f, 0.0f, 0.0f}, // 5
+        {1.0f, 1.0f, 0.0f}, // 6
+        {0.0f, 1.0f, 0.0f}, // 7
+        {0.0f, 0.0f, 1.0f}, // 8
+        {1.0f, 0.0f, 1.0f}, // 9
+        {1.0f, 1.0f, 1.0f}, // 10
+        {0.0f, 1.0f, 1.0f}, // 11 -> Objętość = 1.0 * 1.0 * 1.0 = 1.0
+
+        // --- Prism / Wedge nodes (6 nodes) ---
+        {0.0f, 0.0f, 0.0f}, // 12
+        {1.0f, 0.0f, 0.0f}, // 13
+        {0.0f, 1.0f, 0.0f}, // 14
+        {0.0f, 0.0f, 2.0f}, // 15
+        {1.0f, 0.0f, 2.0f}, // 16
+        {0.0f, 1.0f, 2.0f}, // 17 -> Pole trójkąta podstawy = 0.5, wysokość = 2.0 -> Objętość = 0.5 * 2.0 = 1.0
+
+        // --- Pyramid nodes (5 nodes) ---
+        {0.0f, 0.0f, 0.0f}, // 18
+        {1.0f, 0.0f, 0.0f}, // 19
+        {1.0f, 1.0f, 0.0f}, // 20
+        {0.0f, 1.0f, 0.0f}, // 21
+        {0.5f, 0.5f, 1.0f}, // 22 -> Pole podstawy = 1.0, wysokość = 1.0 -> Objętość = 1/3 * Base * h = 1.0 / 3.0 ≈ 0.3333333
+
+        // --- Boundary Triangle nodes (3 nodes) ---
+        {0.0f, 0.0f, 0.0f}, // 23
+        {2.0f, 0.0f, 0.0f}, // 24
+        {0.0f, 2.0f, 0.0f}, // 25 -> Pole powierzchni = 0.5 * base * height = 0.5 * 2.0 * 2.0 = 2.0
+
+        // --- Boundary Quad nodes (4 nodes) ---
+        {0.0f, 0.0f, 0.0f}, // 26
+        {2.0f, 0.0f, 0.0f}, // 27
+        {2.0f, 2.0f, 0.0f}, // 28
+        {0.0f, 2.0f, 0.0f}  // 29 -> Pole powierzchni = 2.0 * 2.0 = 4.0
+    };
+
+    // 2. Tworzymy strukturę Elements i wypełniamy indeksami węzłów dla każdego typu
+    Elements synthetic_elements;
+    
+    synthetic_elements.at(ElementType::Tetrahedron)      = {0, 1, 2, 3};
+    synthetic_elements.at(ElementType::Hexahedron)       = {4, 5, 6, 7, 8, 9, 10, 11};
+    synthetic_elements.at(ElementType::Prism)            = {12, 13, 14, 15, 16, 17};
+    synthetic_elements.at(ElementType::Pyramid)          = {18, 19, 20, 21, 22};
+    synthetic_elements.at(ElementType::BoundaryTriangle) = {23, 24, 25};
+    synthetic_elements.at(ElementType::BoundaryQuad)     = {26, 27, 28, 29};
+
+    // 3. Inicjalizujemy pusty obiekt Msh lub ręcznie konstruujemy widok urządzenia (MeshDeviceView)
+    // Ponieważ Msh ma konstruktor przyjmujący ścieżkę pliku, możemy stworzyć klasę pomocniczą 
+    // lub rozszerzyć Msh o konstruktor/metodę przyjmującą gotowe wektory (jeśli takową dopiszesz),
+    // lub zasymulować dokładnie to samo alokacją USM wewnątrz testu:
+
+    MeshDeviceView dev_view;
+    
+    // Alokacja węzłów na GPU
+    dev_view.d_nodes.num_nodes = synthetic_nodes.size();
+    auto* d_nodes_mem = sycl::malloc_device<Vector3>(synthetic_nodes.size(), queue);
+    queue.copy(synthetic_nodes.data(), d_nodes_mem, synthetic_nodes.size()).wait();
+    dev_view.d_nodes.nodes = d_nodes_mem;
+
+    // Alokacja elementów na GPU w pętli po ElementType::ALL
+    for (ElementType type : ElementType::ALL) {
+        auto& h_elem_vec = synthetic_elements.at(type);
+        auto& d_elem_view = dev_view.elements_at(type);
+
+        d_elem_view.type = type;
+        d_elem_view.nodes_per_element = type.get_num_nodes_per_element();
+        d_elem_view.num_indices = h_elem_vec.size();
+
+        if (!h_elem_vec.empty()) {
+            int* d_indices_mem = sycl::malloc_device<int>(h_elem_vec.size(), queue);
+            queue.copy(h_elem_vec.data(), d_indices_mem, h_elem_vec.size()).wait();
+            d_elem_view.indices = d_indices_mem;
+        } else {
+            d_elem_view.indices = nullptr;
+        }
+        d_elem_view.volumes = nullptr;
+    }
+
+    // 4. Odpalamy obliczenia objętości (dokładnie tak samo, jak robi to Msh::compute_volumes())
+    for (ElementType type : ElementType::ALL) {
+        auto &d_elements = dev_view.elements_at(type);
+        if (d_elements.num_indices == 0 || d_elements.nodes_per_element == 0) continue;
+
+        size_t num_elements = d_elements.num_indices / d_elements.nodes_per_element;
+        float* d_volumes_mutable = sycl::malloc_device<float>(num_elements, queue);
+        d_elements.volumes = d_volumes_mutable;
+
+        const Vector3* d_nodes_ptr = dev_view.d_nodes.nodes;
+        const int* d_indices_ptr = d_elements.indices;
+        size_t nodes_per_elem = d_elements.nodes_per_element;
+        ElementType current_type = type;
+
+        queue.parallel_for(sycl::range<1>(num_elements), [=](sycl::id<1> idx) {
+            size_t e = idx[0];
+            const int* element_indices = d_indices_ptr + (e * nodes_per_elem);
+            d_volumes_mutable[e] = current_type.device_compute_element_volume(d_nodes_ptr, element_indices);
+        }).wait();
+    }
+
+    // 5. Kopiujemy wyniki z GPU z powrotem na hosta i weryfikujemy z wartościami teoretycznymi!
+    auto verify_volume = [&](ElementType type, float expected_val, const std::string& name) {
+        const auto& d_elem_view = dev_view.elements_at(type);
+        ASSERT_NE(d_elem_view.volumes, nullptr) << "Brak alokacji objętości dla: " << name;
+        
+        size_t num_elems = d_elem_view.num_indices / d_elem_view.nodes_per_element;
+        std::vector<float> h_vols(num_elems);
+        queue.copy(d_elem_view.volumes, h_vols.data(), num_elems).wait();
+
+        ASSERT_EQ(num_elems, 1) << "Test zakłada dokładnie 1 element typu " << name;
+        EXPECT_NEAR(h_vols[0], expected_val, 1e-4f) << "Niezgodność objętości/pola dla elementu: " << name;
+    };
+
+    // Weryfikacja analityczna każdego elementu:
+    verify_volume(ElementType::Tetrahedron,      1.0f / 6.0f, "Tetrahedron");
+    verify_volume(ElementType::Hexahedron,       1.0f,        "Hexahedron");
+    verify_volume(ElementType::Prism,            1.0f,        "Prism");
+    verify_volume(ElementType::Pyramid,          1.0f / 3.0f, "Pyramid");
+    verify_volume(ElementType::BoundaryTriangle, 2.0f,        "Boundary Triangle");
+    verify_volume(ElementType::BoundaryQuad,     4.0f,        "Boundary Quad");
+
+    // 6. Sprzątanie pamięci USM (RAII ręczne dla testu syntetycznego)
+    sycl::free(const_cast<Vector3*>(dev_view.d_nodes.nodes), queue);
+    for (ElementType type : ElementType::ALL) {
+        auto& d_elem_view = dev_view.elements_at(type);
+        if (d_elem_view.indices) sycl::free(const_cast<int*>(d_elem_view.indices), queue);
+        if (d_elem_view.volumes) sycl::free(const_cast<float*>(d_elem_view.volumes), queue);
+    }
+
+    std::cout << "[Test Sukces] Syntetyczny test objętości / pól powierzchni na GPU przeszedł pomyślnie!\n";
+}
+
+/**
+ * @test Verifies that Msh::compute_volumes() correctly computes analytical volumes 
+ * and surface areas for a synthetic, hardcoded mesh on the GPU.
+ */
+TEST_F(MshTest, SyntheticMeshWithMshClassVolumeVerification) {
+    // 1. Tworzymy fikcyjną listę węzłów (Nodes) w przestrzeni 3D dla każdego typu elementu
+    std::vector<Vector3> synthetic_nodes = {
+        // --- Tetrahedron (4 węzły) ---
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f},
+        
+        // --- Hexahedron (8 węzłów) ---
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f, 1.0f},
+        
+        // --- Prism (6 węzłów) ---
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 2.0f}, {1.0f, 0.0f, 2.0f}, {0.0f, 1.0f, 2.0f},
+        
+        // --- Pyramid (5 węzłów) ---
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.5f, 0.5f, 1.0f},
+        
+        // --- Boundary Triangle (3 węzły) ---
+        {0.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f}, {0.0f, 2.0f, 0.0f},
+        
+        // --- Boundary Quad (4 węzły) ---
+        {0.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f}, {2.0f, 2.0f, 0.0f}, {0.0f, 2.0f, 0.0f}
+    };
+
+    // 2. Tworzymy strukturę Elements i przypisujemy indeksy
+    Elements synthetic_elements;
+    synthetic_elements.at(ElementType::Tetrahedron)      = {0, 1, 2, 3};
+    synthetic_elements.at(ElementType::Hexahedron)       = {4, 5, 6, 7, 8, 9, 10, 11};
+    synthetic_elements.at(ElementType::Prism)            = {12, 13, 14, 15, 16, 17};
+    synthetic_elements.at(ElementType::Pyramid)          = {18, 19, 20, 21, 22};
+    synthetic_elements.at(ElementType::BoundaryTriangle) = {23, 24, 25};
+    synthetic_elements.at(ElementType::BoundaryQuad)     = {26, 27, 28, 29};
+
+    // 3. Tworzymy obiekt Msh bezpośrednio z danych syntetycznych 
+    // (konstruktor sam wywoła upload_to_device() oraz compute_volumes())
+    Msh mesh(std::move(synthetic_nodes), std::move(synthetic_elements), queue);
+
+    // Pobieramy widok urządzenia z naszej klasy Msh
+    MeshDeviceView dev_view = mesh.get_device_view();
+
+    // 4. Lambda pomocnicza do pobierania i weryfikacji objętości z GPU
+    auto verify_volume = [&](ElementType type, float expected_val, const std::string& name) {
+        const auto& d_elem_view = dev_view.elements_at(type);
+        ASSERT_NE(d_elem_view.volumes, nullptr) << "Brak alokacji objętości dla: " << name;
+        
+        size_t num_elems = d_elem_view.num_indices / d_elem_view.nodes_per_element;
+        ASSERT_EQ(num_elems, 1) << "Test zakłada dokładnie 1 element typu " << name;
+
+        std::vector<float> h_vols(num_elems);
+        queue.copy(d_elem_view.volumes, h_vols.data(), num_elems).wait();
+
+        EXPECT_NEAR(h_vols[0], expected_val, 1e-4f) << "Niezgodność objętości/pola dla elementu: " << name;
+    };
+
+    // 5. Weryfikacja analityczna wyników obliczonych przez Msh::compute_volumes()
+    verify_volume(ElementType::Tetrahedron,      1.0f / 6.0f, "Tetrahedron");
+    verify_volume(ElementType::Hexahedron,       1.0f,        "Hexahedron");
+    verify_volume(ElementType::Prism,            1.0f,        "Prism");
+    verify_volume(ElementType::Pyramid,          1.0f / 3.0f, "Pyramid");
+    verify_volume(ElementType::BoundaryTriangle, 2.0f,        "Boundary Triangle");
+    verify_volume(ElementType::BoundaryQuad,     4.0f,        "Boundary Quad");
+
+    std::cout << "[Test Sukces] Test syntetyczny z klasą Msh i compute_volumes() zakończony pomyślnie!\n";
 }

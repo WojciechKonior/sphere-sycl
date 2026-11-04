@@ -4,13 +4,21 @@ Msh::Msh(const std::string &filename, sycl::queue& q) : queue_(q)
 {
     load(filename);
     upload_to_device();
+    compute_element_volumes();
+}
+
+Msh::Msh(std::vector<Vector3>&& h_nodes, Elements&& h_elements, sycl::queue& q) 
+    : queue_(q), nodes(std::move(h_nodes)), elements(std::move(h_elements)) 
+{
+    upload_to_device();
+    compute_element_volumes();
 }
 
 Msh::~Msh()
 {
     // RAII: Bezpieczne zwolnienie alokacji węzłów
-    if (mesh_device_view.d_nodes) {
-        sycl::free(const_cast<Vector3*>(mesh_device_view.d_nodes), queue_);
+    if (mesh_device_view.d_nodes.nodes) {
+        sycl::free(const_cast<Vector3*>(mesh_device_view.d_nodes.nodes), queue_);
     }
 
     // RAII: Bezpieczne zwolnienie wszystkich elementów z uniwersalnej tablicy widoku
@@ -20,15 +28,19 @@ Msh::~Msh()
             sycl::free(const_cast<int*>(elem_view.indices), queue_);
             elem_view.indices = nullptr; // Dobra praktyka: zerowanie wskaźnika po zwolnieniu
         }
+        if (elem_view.volumes) {
+            sycl::free(const_cast<float*>(elem_view.volumes), queue_);
+            elem_view.volumes = nullptr;
+        }
     }
 }
 
 void Msh::upload_to_device()
 {
     if (!nodes.empty()) {
-        mesh_device_view.d_nodes = sycl::malloc_device<Vector3>(nodes.size(), queue_);
-        queue_.copy(nodes.data(), const_cast<Vector3*>(mesh_device_view.d_nodes), nodes.size()).wait();
-        mesh_device_view.num_nodes = nodes.size();
+        mesh_device_view.d_nodes.nodes = sycl::malloc_device<Vector3>(nodes.size(), queue_);
+        queue_.copy(nodes.data(), const_cast<Vector3*>(mesh_device_view.d_nodes.nodes), nodes.size()).wait();
+        mesh_device_view.d_nodes.num_nodes = nodes.size();
     }
 
     for (ElementType type : ElementType::ALL) {
@@ -48,6 +60,38 @@ void Msh::upload_to_device()
     }
 }
 
+void Msh::compute_element_volumes()
+{
+    for (ElementType type : ElementType::ALL) {
+        auto &d_elements = mesh_device_view.elements_at(type);
+        
+        // Jeśli dany typ elementów nie występuje w siatce, pomijamy
+        if (d_elements.num_indices == 0 || d_elements.nodes_per_element == 0) {
+            d_elements.volumes = nullptr;
+            continue;
+        }
+
+        size_t num_elements = d_elements.num_indices / d_elements.nodes_per_element;
+
+        // 1. Alokacja pamięci USM na urządzeniu dla objętości elementów
+        float* d_volumes_mutable = sycl::malloc_device<float>(num_elements, queue_);
+        d_elements.volumes = d_volumes_mutable; // Przypisanie doconst wskaźnika w widoku
+
+        // Pobieramy stałe widoki do przekazania przez wartość do lambdy SYCL
+        const Vector3* d_nodes_ptr = mesh_device_view.d_nodes.nodes;
+        const int* d_indices_ptr = d_elements.indices;
+        size_t nodes_per_elem = d_elements.nodes_per_element;
+        ElementType current_type = type;
+
+        // 2. Uruchomienie kernela SYCL za pomocą parallel_for
+        queue_.parallel_for(sycl::range<1>(num_elements), [=](sycl::id<1> idx) {
+            size_t e = idx[0];
+            size_t offset = e * nodes_per_elem;
+            d_volumes_mutable[e] = current_type.device_compute_element_volume(d_nodes_ptr, d_indices_ptr);
+        }).wait(); // Czekamy na zakończenie obliczeń kernela
+    }
+}
+
 MeshDeviceView Msh::get_device_view() const
 {
     return mesh_device_view;
@@ -55,7 +99,7 @@ MeshDeviceView Msh::get_device_view() const
 
 size_t Msh::get_node_count() const
 {
-    return mesh_device_view.num_nodes;
+    return mesh_device_view.d_nodes.num_nodes;
 }
 
 size_t Msh::get_element_count(ElementType type) const
@@ -65,7 +109,7 @@ size_t Msh::get_element_count(ElementType type) const
 
 const Vector3 *Msh::get_nodes_data() const
 {
-    return mesh_device_view.d_nodes;
+    return mesh_device_view.d_nodes.nodes;
 }
 
 const ElementsDeviceView& Msh::get_elements_data(ElementType type) const

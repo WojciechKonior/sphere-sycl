@@ -302,6 +302,27 @@ namespace SimulationUtils {
                     return 0.0f;
             }
         }
+
+        /// @brief Computes the element centroid on the device using node coordinates.
+        inline Vector3 device_compute_element_centroid(const Vector3* d_nodes, const int* element_indices) const {
+            double sum_x = 0.0;
+            double sum_y = 0.0;
+            double sum_z = 0.0;
+
+            for (size_t i = 0; i < get_num_nodes_per_element(); ++i) {
+                auto node = static_cast<Vec3<double>>(d_nodes[element_indices[i]]);
+                sum_x += node.x;
+                sum_y += node.y;
+                sum_z += node.z;
+            }
+
+            double inv_n = 1.0 / static_cast<double>(get_num_nodes_per_element());
+            return Vector3{
+                static_cast<float>(sum_x * inv_n),
+                static_cast<float>(sum_y * inv_n),
+                static_cast<float>(sum_z * inv_n)
+            };
+        }
     };
 }
 

@@ -688,3 +688,83 @@ TEST_F(MshTest, SyntheticMeshWithMshClassVolumeVerification) {
 
     std::cout << "[Test Sukces] Test syntetyczny z klasą Msh i compute_volumes() zakończony pomyślnie!\n";
 }
+
+/**
+ * @test Verifies that Msh::compute_element_centroids() correctly computes analytical 
+ * centroids (centers of mass) for a synthetic, hardcoded mesh on the GPU.
+ */
+TEST_F(MshTest, SyntheticMeshWithMshClassCentroidVerification) {
+    // 1. Tworzymy fikcyjną listę węzłów (Nodes) w przestrzeni 3D dla każdego typu elementu
+    std::vector<Vector3> synthetic_nodes = {
+        // --- Tetrahedron (4 węzły) ---
+        // Środek ciężkości to średnia arytmetyczna współrzędnych: (0+1+0+0)/4, (0+0+1+0)/4, (0+0+0+1)/4 = (0.25, 0.25, 0.25)
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f},
+        
+        // --- Hexahedron (8 węzłów) ---
+        // Kostka od [0,0,0] do [1,1,1] -> Centroid = (0.5, 0.5, 0.5)
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f, 1.0f},
+        
+        // --- Prism (6 węzłów) ---
+        // Podstawa dolna w z=0, górna w z=2. Środek x = (0+1+0+0+1+0)/6 = 2/6 = 1/3 ≈ 0.3333, y = 1/3, z = (0+0+0+2+2+2)/6 = 1.0
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 2.0f}, {1.0f, 0.0f, 2.0f}, {0.0f, 1.0f, 2.0f},
+        
+        // --- Pyramid (5 węzłów) ---
+        // Podstawa w z=0 (x: 0->1, y: 0->1), wierzchołek w (0.5, 0.5, 1.0)
+        // Środek x = (0+1+1+0+0.5)/5 = 3.5/5 = 0.7, y = 0.7, z = (0+0+0+0+1)/5 = 0.2
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.5f, 0.5f, 1.0f},
+        
+        // --- Boundary Triangle (3 węzły) ---
+        // Węzły: (0,0,0), (2,0,0), (0,2,0) -> x = (0+2+0)/3 = 2/3, y = 2/3, z = 0.0
+        {0.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f}, {0.0f, 2.0f, 0.0f},
+        
+        // --- Boundary Quad (4 węzły) ---
+        // Węzły: (0,0,0), (2,0,0), (2,2,0), (0,2,0) -> x = (0+2+2+0)/4 = 1.0, y = 1.0, z = 0.0
+        {0.0f, 0.0f, 0.0f}, {2.0f, 0.0f, 0.0f}, {2.0f, 2.0f, 0.0f}, {0.0f, 2.0f, 0.0f}
+    };
+
+    // 2. Tworzymy strukturę Elements i przypisujemy indeksy
+    Elements synthetic_elements;
+    synthetic_elements.at(ElementType::Tetrahedron)      = {0, 1, 2, 3};
+    synthetic_elements.at(ElementType::Hexahedron)       = {4, 5, 6, 7, 8, 9, 10, 11};
+    synthetic_elements.at(ElementType::Prism)            = {12, 13, 14, 15, 16, 17};
+    synthetic_elements.at(ElementType::Pyramid)          = {18, 19, 20, 21, 22};
+    synthetic_elements.at(ElementType::BoundaryTriangle) = {23, 24, 25};
+    synthetic_elements.at(ElementType::BoundaryQuad)     = {26, 27, 28, 29};
+
+    // 3. Tworzymy obiekt Msh bezpośrednio z danych syntetycznych.
+    // Uwaga: Jeśli konstruktor Msh wywołuje domyślnie tylko compute_volumes(), 
+    // musimy jawnie wywołać również compute_element_centroids(queue) na widoku urządzenia.
+    Msh mesh(std::move(synthetic_nodes), std::move(synthetic_elements), queue);
+
+    // Pobieramy widok urządzenia i wyliczamy centroidy na GPU
+    MeshDeviceView dev_view = mesh.get_device_view();
+    dev_view.compute_element_centroids(queue);
+
+    // 4. Lambda pomocnicza do pobierania i weryfikacji centroidów z GPU
+    auto verify_centroid = [&](ElementType type, Vector3 expected_val, const std::string& name) {
+        const auto& d_elem_view = dev_view.elements_at(type);
+        ASSERT_NE(d_elem_view.centroids, nullptr) << "Brak alokacji centroidów dla: " << name;
+        
+        size_t num_elems = d_elem_view.num_indices / d_elem_view.nodes_per_element;
+        ASSERT_EQ(num_elems, 1) << "Test zakłada dokładnie 1 element typu " << name;
+
+        std::vector<Vector3> h_centroids(num_elems);
+        queue.copy(d_elem_view.centroids, h_centroids.data(), num_elems).wait();
+
+        EXPECT_NEAR(h_centroids[0].x, expected_val.x, 1e-4f) << "Niezgodność współrzędnej X centroidu dla: " << name;
+        EXPECT_NEAR(h_centroids[0].y, expected_val.y, 1e-4f) << "Niezgodność współrzędnej Y centroidu dla: " << name;
+        EXPECT_NEAR(h_centroids[0].z, expected_val.z, 1e-4f) << "Niezgodność współrzędnej Z centroidu dla: " << name;
+    };
+
+    // 5. Weryfikacja analityczna współrzędnych środków ciężkości
+    verify_centroid(ElementType::Tetrahedron,      {0.25f, 0.25f, 0.25f}, "Tetrahedron");
+    verify_centroid(ElementType::Hexahedron,       {0.5f,  0.5f,  0.5f},  "Hexahedron");
+    verify_centroid(ElementType::Prism,            {1.0f/3.0f, 1.0f/3.0f, 1.0f}, "Prism");
+    verify_centroid(ElementType::Pyramid,          {0.7f,  0.7f,  0.2f},  "Pyramid");
+    verify_centroid(ElementType::BoundaryTriangle, {2.0f/3.0f, 2.0f/3.0f, 0.0f}, "Boundary Triangle");
+    verify_centroid(ElementType::BoundaryQuad,     {1.0f,  1.0f,  0.0f},  "Boundary Quad");
+
+    std::cout << "[Test Sukces] Test weryfikacji centroidów zakończony pomyślnie!\n";
+}

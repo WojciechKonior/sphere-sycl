@@ -3,15 +3,13 @@
 Msh::Msh(const std::string &filename, sycl::queue& q) : queue_(q)
 {
     load(filename);
-    upload_to_device();
-    compute_element_volumes();
+    prepare_mesh_on_device();
 }
 
 Msh::Msh(std::vector<Vector3>&& h_nodes, Elements&& h_elements, sycl::queue& q) 
     : queue_(q), nodes(std::move(h_nodes)), elements(std::move(h_elements)) 
 {
-    upload_to_device();
-    compute_element_volumes();
+    prepare_mesh_on_device();
 }
 
 Msh::~Msh()
@@ -31,6 +29,10 @@ Msh::~Msh()
         if (elem_view.volumes) {
             sycl::free(const_cast<float*>(elem_view.volumes), queue_);
             elem_view.volumes = nullptr;
+        }
+        if (elem_view.centroids) {
+            sycl::free(const_cast<Vector3*>(elem_view.centroids), queue_);
+            elem_view.centroids = nullptr;
         }
     }
 }
@@ -60,36 +62,10 @@ void Msh::upload_to_device()
     }
 }
 
-void Msh::compute_element_volumes()
-{
-    for (ElementType type : ElementType::ALL) {
-        auto &d_elements = mesh_device_view.elements_at(type);
-        
-        // Jeśli dany typ elementów nie występuje w siatce, pomijamy
-        if (d_elements.num_indices == 0 || d_elements.nodes_per_element == 0) {
-            d_elements.volumes = nullptr;
-            continue;
-        }
-
-        size_t num_elements = d_elements.num_indices / d_elements.nodes_per_element;
-
-        // 1. Alokacja pamięci USM na urządzeniu dla objętości elementów
-        float* d_volumes_mutable = sycl::malloc_device<float>(num_elements, queue_);
-        d_elements.volumes = d_volumes_mutable; // Przypisanie doconst wskaźnika w widoku
-
-        // Pobieramy stałe widoki do przekazania przez wartość do lambdy SYCL
-        const Vector3* d_nodes_ptr = mesh_device_view.d_nodes.nodes;
-        const int* d_indices_ptr = d_elements.indices;
-        size_t nodes_per_elem = d_elements.nodes_per_element;
-        ElementType current_type = type;
-
-        // 2. Uruchomienie kernela SYCL za pomocą parallel_for
-        queue_.parallel_for(sycl::range<1>(num_elements), [=](sycl::id<1> idx) {
-            size_t e = idx[0];
-            size_t offset = e * nodes_per_elem;
-            d_volumes_mutable[e] = current_type.device_compute_element_volume(d_nodes_ptr, d_indices_ptr);
-        }).wait(); // Czekamy na zakończenie obliczeń kernela
-    }
+void Msh::prepare_mesh_on_device(){
+    upload_to_device();
+    mesh_device_view.compute_element_volumes(queue_);
+    mesh_device_view.compute_element_centroids(queue_);
 }
 
 MeshDeviceView Msh::get_device_view() const

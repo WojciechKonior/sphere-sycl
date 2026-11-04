@@ -63,6 +63,6 @@ private:
     /// @brief Allocates USM device memory and copies mesh data from host to GPU.
     void upload_to_device();
 
-    /// @brief Allocates USM device memory and computes volume for each element on GPU.
-    void compute_element_volumes();
+    /// @brief Prepares static mesh features on GPU.
+    void prepare_mesh_on_device();
 };

@@ -117,6 +117,14 @@ namespace SimulationUtils {
     }
 
     /**
+     * @brief Supported mesh file formats.
+     */
+    enum class MeshFormat {
+        MSH_v4_ASCII,
+        Unknown
+    };
+
+    /**
      * @brief Represents a robust wrapper for mesh element types, matching Gmsh IDs.
      */
     struct ElementType {

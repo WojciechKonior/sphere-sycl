@@ -79,6 +79,7 @@ endif()
 set(HEADERS
     include/Field/ElectromagneticField.hpp
     include/Mesh/IMesh.hpp
+    include/Mesh/MeshDeviceView.hpp
     include/Mesh/Msh.hpp
     include/SimulationSteps/ParticleInjectorStrategy/FlatQuadeShape.hpp
     include/SimulationSteps/ParticleInjectorStrategy/IParticleInjectorStrategy.hpp
@@ -102,6 +103,7 @@ set(HEADERS
 
 # 2. Deklaracja plików źródłowych rdzenia symulacji (BEZ main w Sphere.cpp)
 set(CORE_SOURCES
+    src/Mesh/MeshDeviceView.cpp
     src/Mesh/Msh.cpp
     src/SimulationSteps/ChargeDepositionStep.cpp
     src/SimulationSteps/FieldSolverStep.cpp

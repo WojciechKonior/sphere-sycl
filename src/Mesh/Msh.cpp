@@ -52,6 +52,7 @@ void Msh::upload_to_device()
         d_elements.type = type;
         d_elements.nodes_per_element = type.get_num_nodes_per_element();
         d_elements.num_indices = h_elements.size();
+        d_elements.num_elements = d_elements.num_indices / d_elements.nodes_per_element;
 
         if (!h_elements.empty()) {
             d_elements.indices = sycl::malloc_device<int>(h_elements.size(), queue_);

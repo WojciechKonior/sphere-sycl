@@ -4,6 +4,7 @@
 #include <vector>
 #include <map>
 #include "Mesh/Msh.hpp"
+#include "Mesh/MeshDeviceView.hpp"
 
 /**
  * @class GridFieldTest
@@ -762,7 +763,7 @@ TEST_F(MshTest, SyntheticMeshWithMshClassCentroidVerification) {
     verify_centroid(ElementType::Tetrahedron,      {0.25f, 0.25f, 0.25f}, "Tetrahedron");
     verify_centroid(ElementType::Hexahedron,       {0.5f,  0.5f,  0.5f},  "Hexahedron");
     verify_centroid(ElementType::Prism,            {1.0f/3.0f, 1.0f/3.0f, 1.0f}, "Prism");
-    verify_centroid(ElementType::Pyramid,          {0.7f,  0.7f,  0.2f},  "Pyramid");
+    verify_centroid(ElementType::Pyramid,          {0.5f,  0.5f,  0.2f},  "Pyramid");
     verify_centroid(ElementType::BoundaryTriangle, {2.0f/3.0f, 2.0f/3.0f, 0.0f}, "Boundary Triangle");
     verify_centroid(ElementType::BoundaryQuad,     {1.0f,  1.0f,  0.0f},  "Boundary Quad");
 

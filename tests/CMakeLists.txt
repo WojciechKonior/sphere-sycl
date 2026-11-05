@@ -22,7 +22,8 @@ add_executable(picsim_tests
     SimulationSteps/test_ParticleInjectorStep.cpp
     SimulationSteps/test_ParticlePusherStep.cpp
     test_Chunk.cpp
-    test_GridField.cpp 
+    test_GridField.cpp
+    test_Matrix.cpp 
     test_ParticleStorage.cpp
     test_SimulationEngine.cpp 
     test_SimulationUtils.cpp

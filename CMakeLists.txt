@@ -95,6 +95,7 @@ set(HEADERS
     include/SimulationSteps/ParticlePusherStep.hpp
     include/Chunk.hpp
     include/GridField.hpp
+    include/Matrix.hpp
     include/ParticleStorage.hpp
     include/SimulationEngine.hpp
     include/SimulationUtils.hpp

@@ -769,3 +769,108 @@ TEST_F(MshTest, SyntheticMeshWithMshClassCentroidVerification) {
 
     std::cout << "[Test Sukces] Test weryfikacji centroidów zakończony pomyślnie!\n";
 }
+
+/**
+ * @test Verifies that compute_element_volumes() and compute_element_centroids() 
+ * correctly handle multiple elements of the same type shifted in space on the GPU.
+ */
+TEST_F(MshTest, SyntheticMeshMultipleElementsVerification) {
+    // 1. Tworzymy fikcyjną listę węzłów (Nodes) w przestrzeni 3D dla wielu elementów tego samego typu
+    std::vector<Vector3> synthetic_nodes = {
+        // --- Tetrahedron 0 (przy początku układu) ---
+        // Węzły 0, 1, 2, 3 -> Centroid = (0.25, 0.25, 0.25), Vol = 1.0/6.0
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f},
+        
+        // --- Tetrahedron 1 (przesunięty o +5.0 w osi X) ---
+        // Węzły 4, 5, 6, 7 -> Centroid = (5.25, 0.25, 0.25), Vol = 1.0/6.0
+        {5.0f, 0.0f, 0.0f}, {6.0f, 0.0f, 0.0f}, {5.0f, 1.0f, 0.0f}, {5.0f, 0.0f, 1.0f},
+
+        // --- Hexahedron 0 (jednostkowy przy z=2) ---
+        // Węzły 8..15 -> Centroid = (0.5, 0.5, 2.5), Vol = 1.0
+        {0.0f, 0.0f, 2.0f}, {1.0f, 0.0f, 2.0f}, {1.0f, 1.0f, 2.0f}, {0.0f, 1.0f, 2.0f},
+        {0.0f, 0.0f, 3.0f}, {1.0f, 0.0f, 3.0f}, {1.0f, 1.0f, 3.0f}, {0.0f, 1.0f, 3.0f},
+
+        // --- Hexahedron 1 (przesunięty o +10.0 w osi X) ---
+        // Węzły 16..23 -> Centroid = (10.5, 0.5, 2.5), Vol = 1.0
+        {10.0f, 0.0f, 2.0f}, {11.0f, 0.0f, 2.0f}, {11.0f, 1.0f, 2.0f}, {10.0f, 1.0f, 2.0f},
+        {10.0f, 0.0f, 3.0f}, {11.0f, 0.0f, 3.0f}, {11.0f, 1.0f, 3.0f}, {10.0f, 1.0f, 3.0f}
+    };
+
+    // 2. Tworzymy strukturę Elements i przypisujemy po 2 elementy tego samego typu
+    Elements synthetic_elements;
+    
+    // Dwa tetraedry (2 * 4 = 8 indeksów)
+    synthetic_elements.at(ElementType::Tetrahedron) = {
+        0, 1, 2, 3,  // Element 0
+        4, 5, 6, 7   // Element 1
+    };
+
+    // Dwa heksaedry (2 * 8 = 16 indeksów)
+    synthetic_elements.at(ElementType::Hexahedron) = {
+        8,  9,  10, 11, 12, 13, 14, 15, // Element 0
+        16, 17, 18, 19, 20, 21, 22, 23  // Element 1
+    };
+
+    // 3. Tworzymy obiekt Msh i jawnie uruchamiamy oba kernela na GPU
+    Msh mesh(std::move(synthetic_nodes), std::move(synthetic_elements), queue);
+
+    MeshDeviceView dev_view = mesh.get_device_view();
+    dev_view.compute_element_volumes(queue);     // <-- Jawne wyliczenie objętości
+    dev_view.compute_element_centroids(queue);   // <-- Jawne wyliczenie centroidów
+
+    // 4. Weryfikacja Tetraedrów
+    {
+        const auto& tet_view = dev_view.elements_at(ElementType::Tetrahedron);
+        ASSERT_NE(tet_view.volumes, nullptr);
+        ASSERT_NE(tet_view.centroids, nullptr);
+
+        size_t num_elems = tet_view.num_indices / tet_view.nodes_per_element;
+        ASSERT_EQ(num_elems, 2);
+
+        std::vector<float> h_vols(num_elems);
+        std::vector<Vector3> h_cents(num_elems);
+        queue.copy(tet_view.volumes, h_vols.data(), num_elems).wait();
+        queue.copy(tet_view.centroids, h_cents.data(), num_elems).wait();
+
+        // Element 0
+        EXPECT_NEAR(h_vols[0], 1.0f / 6.0f, 1e-4f);
+        EXPECT_NEAR(h_cents[0].x, 0.25f, 1e-4f);
+        EXPECT_NEAR(h_cents[0].y, 0.25f, 1e-4f);
+        EXPECT_NEAR(h_cents[0].z, 0.25f, 1e-4f);
+
+        // Element 1 (testuje poprawność offsetu w pętli równoległej)
+        EXPECT_NEAR(h_vols[1], 1.0f / 6.0f, 1e-4f);
+        EXPECT_NEAR(h_cents[1].x, 5.25f, 1e-4f);
+        EXPECT_NEAR(h_cents[1].y, 0.25f, 1e-4f);
+        EXPECT_NEAR(h_cents[1].z, 0.25f, 1e-4f);
+    }
+
+    // 5. Weryfikacja Heksaedrów
+    {
+        const auto& hex_view = dev_view.elements_at(ElementType::Hexahedron);
+        ASSERT_NE(hex_view.volumes, nullptr);
+        ASSERT_NE(hex_view.centroids, nullptr);
+
+        size_t num_elems = hex_view.num_indices / hex_view.nodes_per_element;
+        ASSERT_EQ(num_elems, 2);
+
+        std::vector<float> h_vols(num_elems);
+        std::vector<Vector3> h_cents(num_elems);
+        queue.copy(hex_view.volumes, h_vols.data(), num_elems).wait();
+        queue.copy(hex_view.centroids, h_cents.data(), num_elems).wait();
+
+        // Element 0
+        EXPECT_NEAR(h_vols[0], 1.0f, 1e-4f);
+        EXPECT_NEAR(h_cents[0].x, 0.5f,  1e-4f);
+        EXPECT_NEAR(h_cents[0].y, 0.5f,  1e-4f);
+        EXPECT_NEAR(h_cents[0].z, 2.5f,  1e-4f);
+
+        // Element 1
+        EXPECT_NEAR(h_vols[1], 1.0f, 1e-4f);
+        EXPECT_NEAR(h_cents[1].x, 10.5f, 1e-4f);
+        EXPECT_NEAR(h_cents[1].y, 0.5f,  1e-4f);
+        EXPECT_NEAR(h_cents[1].z, 2.5f,  1e-4f);
+    }
+
+    std::cout << "[Test Sukces] Test wieloelementowy dla objętości i centroidów zakończony pomyślnie!\n";
+}

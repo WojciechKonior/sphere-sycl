@@ -4,9 +4,16 @@
 #include <cstddef>
 #include <concepts>
 #include "Species.hpp"
+#include "Matrix.hpp"
 
 class ParticleStorage;
 class GridField;
+
+template <typename T> using Vec3 = Matrix<T, 3, 1>;
+using Vector3 = Vec3<float>;
+using Vector3d = Vec3<double>;
+using Matrix3x3 = Matrix<float, 3, 3>;
+using Matrix3x3d = Matrix<double, 3, 3>;
 
 namespace SimulationUtils {
     /// @brief Physical and simulation configuration constants.
@@ -57,55 +64,6 @@ namespace SimulationUtils {
         double current_time = 0.0f;          ///< Elapsed physical simulation time [s]
         size_t current_step = 0;            ///< Current timestep iteration index
     };
-    
-    /// @brief Simple 3D vector structure for spatial positions and velocity directions.
-    template <typename T>
-    requires std::floating_point<T>
-    struct Vec3 {
-        T x = 0.0f;
-        T y = 0.0f;
-        T z = 0.0f;
-
-        /// @brief Constructors
-        constexpr Vec3() = default;
-        constexpr Vec3(T px, T py, T pz) : x(px), y(py), z(pz) {}
-        template <typename U>
-        constexpr Vec3(const Vec3<U>& other) 
-        : x(static_cast<T>(other.x)), 
-          y(static_cast<T>(other.y)), 
-          z(static_cast<T>(other.z)) {}
-
-        /// @brief Computes the dot product of two Vec3 instances.
-        static inline T dot(const Vec3& a, const Vec3& b) {
-            return a.x * b.x + a.y * b.y + a.z * b.z;
-        }
-
-        /// @brief Statically adds two vectors together.
-        static inline Vec3 add(const Vec3& a, const Vec3& b) {
-            return {a.x + b.x, a.y + b.y, a.z + b.z};
-        }
-
-        /// @brief Statically subtracts two vectors together.
-        static inline Vec3 sub(const Vec3& a, const Vec3& b) {
-            return {a.x - b.x, a.y - b.y, a.z - b.z};
-        }
-
-        /// @brief Computes the cross product of two Vec3 instances (a x b).
-        static inline Vec3 cross(const Vec3& a, const Vec3& b) {
-            return {
-                a.y * b.z - a.z * b.y,
-                a.z * b.x - a.x * b.z,
-                a.x * b.y - a.y * b.x
-            };
-        }
-    
-        /// @brief Multiplies a vector by a scalar value (v * scalar).
-        static inline Vec3 scale(const Vec3& v, T scalar) {
-            return {v.x * scalar, v.y * scalar, v.z * scalar};
-        }
-    };
-
-    using Vector3 = Vec3<float>;
 
     inline Vector3 compute_effective_normal(Vector3 velocity, Vector3 raw_normal){
         Vector3 effective_normal = raw_normal;
@@ -335,5 +293,3 @@ namespace SimulationUtils {
 }
 
 using namespace SimulationUtils;
-using Vector3 = SimulationUtils::Vec3<float>;
-using Vector3d = SimulationUtils::Vec3<double>;

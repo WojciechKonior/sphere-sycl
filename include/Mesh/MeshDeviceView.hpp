@@ -13,6 +13,7 @@ struct ElementsDeviceView {
 
     const float* volumes = nullptr;         ///< The volume for each element in this group.
     const Vector3* centroids = nullptr;     ///< Centers of mass of elements.
+    Matrix3x3 *jacobians = nullptr;         ///< Jacobians martices for each element.
 
     ElementType type;                       ///< The geometrical element type of this group.
     size_t nodes_per_element = 0;           ///< Number of nodes defining a single element (e.g., 4 for tetrahedra).
@@ -53,4 +54,7 @@ struct MeshDeviceView {
 
     /// @brief Allocates USM device memory and computes centroids for each element on GPU.
     void compute_element_centroids(sycl::queue& q);
+
+    /// @brief Allocates USM device memory and computes jacobians for each element on GPU.
+    void compute_element_jacobians(sycl::queue &q);
 };

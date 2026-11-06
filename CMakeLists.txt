@@ -78,6 +78,7 @@ endif()
 # 1. Deklaracja plików nagłówkowych (dla IDE)
 set(HEADERS
     include/Field/ElectromagneticField.hpp
+    include/Mesh/ElementType.hpp
     include/Mesh/IMesh.hpp
     include/Mesh/MeshDeviceView.hpp
     include/Mesh/Msh.hpp

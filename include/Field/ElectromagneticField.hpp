@@ -1,4 +1,7 @@
 #pragma once
+#include "Matrix.hpp"
+
+
 
 struct ElectromagneticField {
     // Tutaj w przyszłości znajdą się sycl::accessor do pamięci pól na siatce

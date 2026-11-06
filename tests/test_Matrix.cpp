@@ -237,7 +237,7 @@ TEST_F(MatrixTest, Matrix3x3OperationsVerification) {
  */
 TEST_F(MatrixTest, Vector3SpecializationComprehensiveVerification) {
     using Vector3 = Matrix<float, 3, 1>;
-    
+
     // Vector3 to nasz alias dla Matrix<float, 3, 1> z dostępem do pól .x, .y, .z
     Vector3 v1(1.0f, 2.0f, 3.0f);
     Vector3 v2(4.0f, 5.0f, 6.0f);
@@ -325,4 +325,120 @@ TEST_F(MatrixTest, Vector3SpecializationComprehensiveVerification) {
     EXPECT_NEAR(mat_vec_mul.data[2][0], 9.0f, 1e-5f);
 
     std::cout << "[Test Sukces] Wszystkie operacje na typie Vector3 (specjalizacja 3x1) przeszły pomyślnie!\n";
+}
+
+/**
+ * @test Verifies that Vector3 (alias to Matrix<float, 3, 1>) fully supports 
+ * direct coordinate access (.x, .y, .z) alongside all matrix and vector operations 
+ * (add, sub, scale, cross, dot, transpose, matrix-vector multiplication, hmerge).
+ */
+TEST_F(MatrixTest, Vector3SpecializationHmergeVerification) {
+    using Vector3 = Matrix<float, 3, 1>;
+    
+    // Vector3 to nasz alias dla Matrix<float, 3, 1> z dostępem do pól .x, .y, .z
+    Vector3 v1(1.0f, 2.0f, 3.0f);
+    Vector3 v2(4.0f, 5.0f, 6.0f);
+    Vector3 v3(2.0f, -1.0f, 3.0f);
+
+    // --- 1. Weryfikacja bezpośredniego dostępu do pól .x, .y, .z (zgodność z unią) ---
+    EXPECT_NEAR(v1.x, 1.0f, 1e-5f);
+    EXPECT_NEAR(v1.y, 2.0f, 1e-5f);
+    EXPECT_NEAR(v1.z, 3.0f, 1e-5f);
+
+    // Test modyfikacji przez pola
+    Vector3 v_mod(0.0f, 0.0f, 0.0f);
+    v_mod.x = 10.0f;
+    v_mod.y = 20.0f;
+    v_mod.z = 30.0f;
+    EXPECT_NEAR(v_mod.data[0][0], 10.0f, 1e-5f);
+    EXPECT_NEAR(v_mod.data[1][0], 20.0f, 1e-5f);
+    EXPECT_NEAR(v_mod.data[2][0], 30.0f, 1e-5f);
+
+    // --- 2. Test dodawania (add) ---
+    // [1+4, 2+5, 3+6] = [5, 7, 9]
+    Vector3 sum_vec = Vector3::add(v1, v2);
+    EXPECT_NEAR(sum_vec.x, 5.0f, 1e-5f);
+    EXPECT_NEAR(sum_vec.y, 7.0f, 1e-5f);
+    EXPECT_NEAR(sum_vec.z, 9.0f, 1e-5f);
+
+    // --- 3. Test odejmowania (sub) ---
+    // [4-1, 5-2, 6-3] = [3, 3, 3]
+    Vector3 sub_vec = Vector3::sub(v2, v1);
+    EXPECT_NEAR(sub_vec.x, 3.0f, 1e-5f);
+    EXPECT_NEAR(sub_vec.y, 3.0f, 1e-5f);
+    EXPECT_NEAR(sub_vec.z, 3.0f, 1e-5f);
+
+    // --- 4. Test skalowania (scale) ---
+    // [1*3, 2*3, 3*3] = [3, 6, 9]
+    Vector3 scaled_vec = Vector3::scale(v1, 3.0f);
+    EXPECT_NEAR(scaled_vec.x, 3.0f, 1e-5f);
+    EXPECT_NEAR(scaled_vec.y, 6.0f, 1e-5f);
+    EXPECT_NEAR(scaled_vec.z, 9.0f, 1e-5f);
+
+    // --- 5. Test iloczynu wektorowego (cross) ---
+    // v1 = [1, 2, 3], v3 = [2, -1, 3]
+    // cx = (2*3) - (3*-1) = 6 + 3 = 9
+    // cy = (3*2) - (1*3)  = 6 - 3 = 3
+    // cz = (1*-1) - (2*2) = -1 - 4 = -5
+    Vector3 cross_vec = Vector3::cross(v1, v3);
+    EXPECT_NEAR(cross_vec.x,  9.0f, 1e-5f);
+    EXPECT_NEAR(cross_vec.y,  3.0f, 1e-5f);
+    EXPECT_NEAR(cross_vec.z, -5.0f, 1e-5f);
+
+    // --- 6. Test iloczynu skalarnego (dot - wersja macierzowa dla równych wymiarów) ---
+    // Teoria: 1*4 + 2*5 + 3*6 = 4 + 10 + 18 = 32
+    float dot_res = Vector3::dot(v1, v2);
+    EXPECT_NEAR(dot_res, 32.0f, 1e-5f);
+
+    // Drugi przykład dla v1 i v3: 1*2 + 2*(-1) + 3*3 = 2 - 2 + 9 = 9
+    float dot_res2 = Vector3::dot(v1, v3);
+    EXPECT_NEAR(dot_res2, 9.0f, 1e-5f);
+
+    // --- 7. Test transpozycji (transpose) ---
+    // Vector3 (3x1) po transpozycji staje się macierzą wierszową (1x3)
+    auto v1_row = v1.transpose();
+    static_assert(std::is_same_v<decltype(v1_row), Matrix<float, 1, 3>>, "Transpose of 3x1 must be 1x3!");
+    EXPECT_NEAR(v1_row.data[0][0], 1.0f, 1e-5f);
+    EXPECT_NEAR(v1_row.data[0][1], 2.0f, 1e-5f);
+    EXPECT_NEAR(v1_row.data[0][2], 3.0f, 1e-5f);
+
+    // --- 8. Test mnożenia macierzowego (multiply) ---
+    // Przemnożenie macierzy 3x3 przez nasz wektor kolumnowy Vector3 (3x1) -> wynik to nowy Vector3 (3x1)
+    Matrix<float, 3, 3> scaling_mat({
+        {1.0f, 0.0f, 0.0f},
+        {0.0f, 2.0f, 0.0f},
+        {0.0f, 0.0f, 3.0f}
+    });
+
+    // M * v1 = [1*1 + 0*2 + 0*3,  0*1 + 2*2 + 0*3,  0*1 + 0*2 + 3*3] = [1, 4, 9]
+    auto mat_vec_mul = Matrix<float, 3, 3>::multiply(scaling_mat, v1);
+    
+    EXPECT_NEAR(mat_vec_mul.data[0][0], 1.0f, 1e-5f);
+    EXPECT_NEAR(mat_vec_mul.data[1][0], 4.0f, 1e-5f);
+    EXPECT_NEAR(mat_vec_mul.data[2][0], 9.0f, 1e-5f);
+
+    // --- 9. Test łączenia wektorów kolumnowych za pomocą hmerge ---
+    Vector3 col1(1.0f, 4.0f, 7.0f);
+    Vector3 col2(2.0f, 5.0f, 8.0f);
+    Vector3 col3(3.0f, 6.0f, 9.0f);
+
+    auto merged_mat = Vector3::hmerge(col1, col2, col3);
+
+    // Weryfikacja typu w czasie kompilacji
+    static_assert(std::is_same_v<decltype(merged_mat), Matrix<float, 3, 3>>, "hmerge of three 3x1 vectors must result in Matrix<float, 3, 3>!");
+
+    // Weryfikacja poprawności danych w połączonej macierzy (kolumna po kolumnie)
+    EXPECT_NEAR(merged_mat.data[0][0], 1.0f, 1e-5f);
+    EXPECT_NEAR(merged_mat.data[1][0], 4.0f, 1e-5f);
+    EXPECT_NEAR(merged_mat.data[2][0], 7.0f, 1e-5f);
+
+    EXPECT_NEAR(merged_mat.data[0][1], 2.0f, 1e-5f);
+    EXPECT_NEAR(merged_mat.data[1][1], 5.0f, 1e-5f);
+    EXPECT_NEAR(merged_mat.data[2][1], 8.0f, 1e-5f);
+
+    EXPECT_NEAR(merged_mat.data[0][2], 3.0f, 1e-5f);
+    EXPECT_NEAR(merged_mat.data[1][2], 6.0f, 1e-5f);
+    EXPECT_NEAR(merged_mat.data[2][2], 9.0f, 1e-5f);
+
+    std::cout << "[Test Sukces] Wszystkie operacje, w tym hmerge, przeszły pomyślnie!\n";
 }

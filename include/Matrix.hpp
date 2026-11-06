@@ -1,4 +1,5 @@
 #pragma once
+#include <sycl/sycl.hpp>
 
 /// @brief Ogólna strukturalna baza danych macierzy (domyślna dla dowolnych wymiarów)
 template <typename T, int Rows, int Cols>
@@ -25,6 +26,9 @@ template <typename T, int Rows, int Cols>
     requires std::floating_point<T> && (Rows > 0) && (Cols > 0)
 struct Matrix : public MatrixStorage<T, Rows, Cols>
 {
+    static constexpr int kRows = Rows;
+    static constexpr int kCols = Cols;
+
     /// @brief Default constructor. Initializes all elements to zero.
     constexpr Matrix() = default;
 
@@ -269,6 +273,40 @@ struct Matrix : public MatrixStorage<T, Rows, Cols>
                 result.data[i][j] = m.data[i][j] * scalar;
             }
         }
+        return result;
+    }
+
+    /// @brief Horizontally merges multiple matrices/vectors (column-wise concatenation).
+    ///        All input matrices must have the exact same number of rows.
+    /// @tparam MappedMatrices Parameter pack of other Matrix types.
+    /// @param other Additional matrices to append on the right.
+    /// @return A new Matrix with combined columns [Rows x (Cols + sum(Cols_i))].
+    template <typename... MappedMatrices>
+    static inline auto hmerge(const Matrix& first, const MappedMatrices&... others) {
+        constexpr int TotalCols = kCols + (MappedMatrices::kCols + ...);
+        
+        // Wymóg: wszystkie macierze muszą mieć tę samą liczbę wierszy (Rows)
+        static_assert(((MappedMatrices::kRows == kRows) && ...), 
+                      "Error: All matrices passed to hmerge must have the same number of rows!");
+
+        Matrix<T, Rows, TotalCols> result{};
+
+        // Lambda pomocnicza do skopiowania danych macierzy do wyniku na odpowiednią pozycję kolumnową
+        auto copy_to_result = [&](const auto& mat, int& start_col) {
+            constexpr int MatCols = std::decay_t<decltype(mat)>::kCols;
+            constexpr int MatRows = std::decay_t<decltype(mat)>::kRows;
+            for (int i = 0; i < MatRows; ++i) {
+                for (int j = 0; j < MatCols; ++j) {
+                    result.data[i][start_col + j] = mat.data[i][j];
+                }
+            }
+            start_col += MatCols;
+        };
+
+        int current_col = 0;
+        copy_to_result(first, current_col);
+        (copy_to_result(others, current_col), ...);
+
         return result;
     }
 };

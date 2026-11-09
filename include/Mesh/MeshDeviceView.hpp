@@ -7,16 +7,18 @@
  * @brief A lightweight device view struct for handling a specific group of mesh elements on the GPU.
  */
 struct ElementsDeviceView {
-    const int* indices = nullptr;           ///< Pointer to element node indices allocated on the device memory.
-    size_t num_indices = 0;                 ///< Total number of indices stored in the indices array.
-    size_t num_elements = 0;                ///< Total number of elements of this type stored in this container.
+    const int* indices = nullptr;               ///< Pointer to element node indices allocated on the device memory.
+    size_t num_indices = 0;                     ///< Total number of indices stored in the indices array.
+    size_t num_elements = 0;                    ///< Total number of elements of this type stored in this container.
 
-    const float* volumes = nullptr;         ///< The volume for each element in this group.
-    const Vector3* centroids = nullptr;     ///< Centers of mass of elements.
-    Matrix3x3 *jacobians = nullptr;         ///< Jacobians martices for each element.
+    const float* volumes = nullptr;             ///< The volume for each element in this group.
+    const Vector3* centroids = nullptr;         ///< Centers of mass of elements.
+    
+    const float* det_jacobians = nullptr;       ///< Jacobians determinants for each element.
+    const Matrix3x3* inv_jacobians = nullptr;   ///< Jacobians inverse martices for each element.
 
-    ElementType type;                       ///< The geometrical element type of this group.
-    size_t nodes_per_element = 0;           ///< Number of nodes defining a single element (e.g., 4 for tetrahedra).
+    ElementType type;                           ///< The geometrical element type of this group.
+    size_t nodes_per_element = 0;               ///< Number of nodes defining a single element (e.g., 4 for tetrahedra).
 };
 
 /**

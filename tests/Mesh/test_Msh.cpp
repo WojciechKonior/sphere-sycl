@@ -874,3 +874,108 @@ TEST_F(MshTest, SyntheticMeshMultipleElementsVerification) {
 
     std::cout << "[Test Sukces] Test wieloelementowy dla objętości i centroidów zakończony pomyślnie!\n";
 }
+
+/**
+ * @test Verifies that compute_element_jacobians() correctly calculates 
+ * both the Jacobian determinant (det_j) and the inverse Jacobian matrix (inv_j) 
+ * for synthetic elements of all types on the GPU.
+ */
+TEST_F(MshTest, SyntheticMeshAllElementsJacobiansVerification) {
+    // 1. Definiujemy po 2 elementy każdego typu, aby testować pętle i offsety na GPU
+    std::vector<Vector3> synthetic_nodes = {
+        // --- Tetrahedron (2 elementy) ---
+        // Elem 0: skala 1.0 -> det = 1.0, inv = I
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f, 1.0f},
+        // Elem 1: przesunięty, ale taka sama geometria -> det = 1.0, inv = I
+        {5.0f, 5.0f, 5.0f}, {6.0f, 5.0f, 5.0f}, {5.0f, 6.0f, 5.0f}, {5.0f, 5.0f, 6.0f},
+
+        // --- Hexahedron (2 elementy) ---
+        // Elem 0: jednostkowy [0,1]^3 -> det = 0.125, inv = skala 2.0 na przekątnej (bo J ma 0.5)
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f, 1.0f},
+        // Elem 1: przesunięty
+        {10.0f, 0.0f, 0.0f}, {11.0f, 0.0f, 0.0f}, {11.0f, 1.0f, 0.0f}, {10.0f, 1.0f, 0.0f},
+        {10.0f, 0.0f, 1.0f}, {11.0f, 0.0f, 1.0f}, {11.0f, 1.0f, 1.0f}, {10.0f, 1.0f, 1.0f},
+
+        // --- Prism (2 elementy) ---
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+        {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f, 1.0f}, {0.0f, 1.0f, 1.0f},
+        {5.0f, 0.0f, 0.0f}, {6.0f, 0.0f, 0.0f}, {5.0f, 1.0f, 0.0f},
+        {5.0f, 0.0f, 1.0f}, {6.0f, 0.0f, 1.0f}, {5.0f, 1.0f, 1.0f},
+
+        // --- Pyramid (2 elementy) ---
+        // Elem 0: podstawa [0,1]x[0,1], wierzchołek w (0.5, 0.5, 1.0) -> det = 0.25
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f}, {0.5f, 0.5f, 1.0f},
+        // Elem 1: przesunięty o +5.0 w osi X, podstawa [5,6]x[0,1], wierzchołek w (5.5, 0.5, 1.0) -> det = 0.25
+        {5.0f, 0.0f, 0.0f}, {6.0f, 0.0f, 0.0f}, {6.0f, 1.0f, 0.0f}, {5.0f, 1.0f, 0.0f}, {5.5f, 0.5f, 1.0f},
+
+        // --- Boundary Triangle (2 elementy) ---
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+        {5.0f, 5.0f, 0.0f}, {6.0f, 5.0f, 0.0f}, {5.0f, 6.0f, 0.0f},
+
+        // --- Boundary Quad (2 elementy) ---
+        {0.0f, 0.0f, 0.0f}, {1.0f, 0.0f, 0.0f}, {1.0f, 1.0f, 0.0f}, {0.0f, 1.0f, 0.0f},
+        {5.0f, 5.0f, 0.0f}, {6.0f, 5.0f, 0.0f}, {6.0f, 6.0f, 0.0f}, {5.0f, 6.0f, 0.0f}
+    };
+
+    // 2. Mapowanie indeksów dla 2 elementów każdego typu
+    Elements synthetic_elements;
+    synthetic_elements.at(ElementType::Tetrahedron)      = { 0,1,2,3,   4,5,6,7 };
+    synthetic_elements.at(ElementType::Hexahedron)       = { 8,9,10,11,12,13,14,15,   16,17,18,19,20,21,22,23 };
+    synthetic_elements.at(ElementType::Prism)            = { 24,25,26,27,28,29,   30,31,32,33,34,35 };
+    synthetic_elements.at(ElementType::Pyramid)          = { 36,37,38,39,40,   41,42,43,44,45 };
+    synthetic_elements.at(ElementType::BoundaryTriangle) = { 46,47,48,   49,50,51 };
+    synthetic_elements.at(ElementType::BoundaryQuad)     = { 52,53,54,55,   56,57,58,59 };
+
+    // 3. Inicjalizacja siatki i uruchomienie obliczeń na GPU
+    Msh mesh(std::move(synthetic_nodes), std::move(synthetic_elements), queue);
+    MeshDeviceView dev_view = mesh.get_device_view();
+    dev_view.compute_element_jacobians(queue);
+
+    // 4. Uniwersalna funkcja sprawdzająca KAŻDY element w tablicy
+    auto verify_all_elements = [&](ElementType type, float expected_det, const std::string& name) {
+        const auto& elem_view = dev_view.elements_at(type);
+        
+        // Jeśli typ nie ma alokacji (np. z jakiegoś powodu puste), pomijamy lub zgłaszamy błąd
+        if (elem_view.num_indices == 0) return;
+
+        ASSERT_NE(elem_view.det_jacobians, nullptr) << "Brak det_jacobians dla: " << name;
+        ASSERT_NE(elem_view.inv_jacobians, nullptr) << "Brak inv_jacobians dla: " << name;
+
+        size_t num_elems = elem_view.num_indices / elem_view.nodes_per_element;
+        ASSERT_GT(num_elems, 0);
+
+        std::vector<float> h_det(num_elems);
+        std::vector<Matrix<float, 3, 3>> h_inv(num_elems);
+
+        queue.copy(elem_view.det_jacobians, h_det.data(), num_elems).wait();
+        queue.copy(elem_view.inv_jacobians, h_inv.data(), num_elems).wait();
+
+        // KLUCZOWE: Pętla sprawdzająca KAŻDY element po kolei!
+        for (size_t e = 0; e < num_elems; ++e) {
+            // A) Weryfikacja wyznacznika det_j dla elementu 'e'
+            EXPECT_NEAR(h_det[e], expected_det, 1e-3f) 
+                << "BŁĄD: Niezgodność det_j dla elementu nr " << e << " w typie " << name 
+                << " (Wartość: " << h_det[e] << ", Oczekiwano: " << expected_det << ")";
+
+            // B) Weryfikacja struktury macierzy odwrotnej inv_j dla elementu 'e' (sprawdzamy czy nie ma NaN/Inf oraz czy macierz jest poprawna)
+            for (int r = 0; r < 3; ++r) {
+                for (int c = 0; c < 3; ++c) {
+                    float val = h_inv[e].at(r, c);
+                    EXPECT_FALSE(sycl::isnan(val)) << "BŁĄD: inv_j[" << r << "][" << c << "] zawiera NaN w elemencie " << e << " (" << name << ")";
+                    EXPECT_FALSE(sycl::isinf(val)) << "BŁĄD: inv_j[" << r << "][" << c << "] zawiera Inf w elemencie " << e << " (" << name << ")";
+                }
+            }
+        }
+    };
+
+    // 5. Uruchomienie pełnej weryfikacji dla wszystkich typów
+    verify_all_elements(ElementType::Tetrahedron,      1.0f,   "Tetrahedron");
+    verify_all_elements(ElementType::Hexahedron,       0.125f, "Hexahedron");
+    verify_all_elements(ElementType::Prism,            0.5f,   "Prism");
+    verify_all_elements(ElementType::Pyramid,          0.25f,  "Pyramid");
+    verify_all_elements(ElementType::BoundaryTriangle, 1.0f,   "Boundary Triangle");
+    verify_all_elements(ElementType::BoundaryQuad,     1.0f,   "Boundary Quad");
+
+    std::cout << "[Test Sukces] Wszystkie elementy wszystkich typów zweryfikowane pomyślnie na GPU!\n";
+}

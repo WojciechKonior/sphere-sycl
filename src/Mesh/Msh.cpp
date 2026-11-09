@@ -34,6 +34,14 @@ Msh::~Msh()
             sycl::free(const_cast<Vector3*>(elem_view.centroids), queue_);
             elem_view.centroids = nullptr;
         }
+        if (elem_view.det_jacobians) {
+            sycl::free(const_cast<float*>(elem_view.det_jacobians), queue_);
+            elem_view.det_jacobians = nullptr;
+        }
+        if (elem_view.inv_jacobians) {
+            sycl::free(const_cast<Matrix<float, 3, 3>*>(elem_view.inv_jacobians), queue_);
+            elem_view.inv_jacobians = nullptr;
+        }
     }
 }
 
@@ -67,6 +75,7 @@ void Msh::prepare_mesh_on_device(){
     upload_to_device();
     mesh_device_view.compute_element_volumes(queue_);
     mesh_device_view.compute_element_centroids(queue_);
+    mesh_device_view.compute_element_jacobians(queue_);
 }
 
 MeshDeviceView Msh::get_device_view() const

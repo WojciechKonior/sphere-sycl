@@ -60,6 +60,16 @@ struct Matrix : public MatrixStorage<T, Rows, Cols>
         }
     }
 
+    /// @brief Zwraca referencję do elementu w podanym wierszu i kolumnie (wersja modyfikowalna).
+    constexpr T& at(int r, int c) {
+        return this->data[r][c];
+    }
+
+    /// @brief Zwraca stałą referencję do elementu w podanym wierszu i kolumnie (wersja tylko do odczytu).
+    constexpr const T& at(int r, int c) const {
+        return this->data[r][c];
+    }
+
     /// @brief Computes the determinant of a square matrix of any arbitrary order using Gaussian elimination with partial pivoting.
     /// @return The calculated determinant value.
     inline T determinant() const

@@ -13,7 +13,7 @@ struct ElementsDeviceView {
 
     const float* volumes = nullptr;             ///< The volume for each element in this group.
     const Vector3* centroids = nullptr;         ///< Centers of mass of elements.
-    
+
     const float* det_jacobians = nullptr;       ///< Jacobians determinants for each element.
     const Matrix3x3* inv_jacobians = nullptr;   ///< Jacobians inverse martices for each element.
 
@@ -59,4 +59,7 @@ struct MeshDeviceView {
 
     /// @brief Allocates USM device memory and computes jacobians for each element on GPU.
     void compute_element_jacobians(sycl::queue &q);
+
+    /// @brief Get total nodes count
+    size_t get_total_nodes() const;
 };

@@ -37,7 +37,7 @@ public:
         // Możemy przekazać odpowiednie akcesory z siatki, jeśli GridField je udostępnia
         // Na ten moment używamy uproszczonych wartości lub gotowych struktur na GPU
         auto field_policy = field_policy_;
-        auto grid_device_view = grid.get_device_view();
+        auto grid_device_view = grid.get_mesh_device_view();
 
         cgh.parallel_for(sycl::range<1>(local_view.count), [=, dt = dt, q_over_m = q_over_m](sycl::id<1> idx) {
             using Float = double;

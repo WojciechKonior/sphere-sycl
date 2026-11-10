@@ -131,3 +131,7 @@ void MeshDeviceView::compute_element_jacobians(sycl::queue &q)
     }
     q.wait();
 }
+
+size_t MeshDeviceView::get_total_nodes() const {
+    return d_nodes.num_nodes;
+}
